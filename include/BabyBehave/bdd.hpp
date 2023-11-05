@@ -52,6 +52,21 @@ namespace BabyBehave::BDD {
         Function fn;
     };
 
+    struct And {
+        using Function = std::function<bool(TestContext&)>;
+        Function fn;
+    };
+
+    struct Or {
+        using Function = std::function<bool(TestContext&)>;
+        Function fn;
+    };
+
+    struct But {
+        using Function = std::function<bool(TestContext&)>;
+        Function fn;
+    };
+
     template<typename T>
     concept IsPrecondition = std::same_as<T, Precondition>;
 
@@ -61,20 +76,45 @@ namespace BabyBehave::BDD {
     template<typename T>
     concept IsPostcondition = std::same_as<T, Postcondition>;
 
+    template<typename T>
+    concept IsAnd = std::same_as<T, And>;
+
+    template<typename T>
+    concept IsOr = std::same_as<T, Or>;
+
+    template<typename T>
+    concept IsBut = std::same_as<T, But>;
+
 
     class BabyBehaveTest {
     public:
-        using StepVariant = std::variant<Precondition, Action, Postcondition>;
+        using StepVariant = std::variant<Precondition, Action, Postcondition, And, Or, But>;
         using Step = std::pair<std::string, StepVariant>;
 
 
         BabyBehaveTest(const std::string& testName, std::function<void(TestContext&)> contextSetupFn)
             : m_testName(testName),
-              m_contextSetupFn(contextSetupFn) {
+            m_contextSetupFn(contextSetupFn) {
+            m_onConditionNotVerifiedCallback = [](const std::string& errorMsg) {
+                std::cerr << errorMsg << std::endl;
+                std::exit(EXIT_FAILURE);
+                };
+            m_onExceptionCallback = [](const std::string& errorMsg) {
+                std::cerr << errorMsg << std::endl;
+                std::exit(EXIT_FAILURE);
+                };
         }
 
         ~BabyBehaveTest() {
             Execute();
+        }
+
+        void SetOnConditionNotVerifiedCallback(std::function<void(const std::string& errorMsg)> callback) {
+            m_onConditionNotVerifiedCallback = callback;
+        }
+
+        void SetOnExceptionCallback(std::function<void(const std::string& errorMsg)> callback) {
+            m_onExceptionCallback = callback;
         }
 
         BabyBehaveTest& WithImpl(const std::string& name, Precondition precondition) {
@@ -92,10 +132,30 @@ namespace BabyBehave::BDD {
             return *this;
         }
 
+        BabyBehaveTest& AndImpl(const std::string& name, And andAction) {
+            m_steps.push_back({ name, andAction });
+            return *this;
+        }
+
+        BabyBehaveTest& OrImpl(const std::string& name, Or orAction) {
+            m_steps.push_back({ name, orAction });
+            return *this;
+        }
+
+        BabyBehaveTest& ButImpl(const std::string& name, But butAction) {
+            m_steps.push_back({ name, butAction });
+            return *this;
+        }
+
     private:
         void Execute() {
             std::cout << "Given a: " << m_testName << std::endl;
-            m_contextSetupFn(m_context);
+            try {
+                m_contextSetupFn(m_context);
+            }
+            catch (const std::exception& e) {
+                VerifyCondition(false, "Exception caught in Context Setup: " + std::string(e.what()));
+            }
 
             for (const auto& step : m_steps) {
                 std::visit([this, &step](auto&& arg) {
@@ -109,25 +169,73 @@ namespace BabyBehave::BDD {
         template<IsPrecondition T>
         void executeStep(const std::string& name, const T& step) {
             std::cout << "    With: " << name << std::endl;
-            VerifyCondition(step.fn(m_context), "Precondition failed");
+            try {
+                VerifyCondition(step.fn(m_context), "Precondition failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in Precondition: " + std::string(e.what()));
+            }
         }
 
         template<IsAction T>
         void executeStep(const std::string& name, const T& step) {
             std::cout << "    When: " << name << std::endl;
-            VerifyCondition(step.fn(m_context), "Action failed");
+            try {
+                VerifyCondition(step.fn(m_context), "Action failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in Action: " + std::string(e.what()));
+            }
         }
 
         template<IsPostcondition T>
         void executeStep(const std::string& name, const T& step) {
             std::cout << "    Then: " << name << std::endl;
-            VerifyCondition(step.fn(m_context), "Postcondition failed");
+            try {
+                VerifyCondition(step.fn(m_context), "Precondition failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in Precondition: " + std::string(e.what()));
+            }
         }
+
+        template<IsAnd T>
+        void executeStep(const std::string& name, const T& step) {
+            std::cout << "    And: " << name << std::endl;
+            try {
+                VerifyCondition(step.fn(m_context), "And condition failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in And condition: " + std::string(e.what()));
+            }
+        }
+
+        template<IsOr T>
+        void executeStep(const std::string& name, const T& step) {
+            std::cout << "    Or: " << name << std::endl;
+            try {
+                VerifyCondition(step.fn(m_context), "Or condition failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in Or condition: " + std::string(e.what()));
+            }
+        }
+
+        template<IsBut T>
+        void executeStep(const std::string& name, const T& step) {
+            std::cout << "    But: " << name << std::endl;
+            try {
+                VerifyCondition(step.fn(m_context), "But condition failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in But condition: " + std::string(e.what()));
+            }
+        }
+
 
         void VerifyCondition(bool condition, const std::string& errorMsg) {
             if (!condition) {
-                std::cerr << errorMsg << std::endl;
-                std::exit(EXIT_FAILURE);
+                m_onConditionNotVerifiedCallback(errorMsg);
             }
         }
 
@@ -136,6 +244,9 @@ namespace BabyBehave::BDD {
         std::function<void(TestContext&)> m_contextSetupFn;
         TestContext m_context;
         std::vector<Step> m_steps;
+
+        std::function<void(const std::string& errorMsg)> m_onConditionNotVerifiedCallback;
+        std::function<void(const std::string& errorMsg)> m_onExceptionCallback;
     };
 
 
@@ -145,22 +256,20 @@ namespace BabyBehave::BDD {
     }
 
 
+#define Given(func) GivenAImpl(#func, {func})
 #define GivenA(func) GivenAImpl(#func, {func})
-#define With(func) WithImpl(#func, {func})
-#define And(func)  WithImpl(#func, {func})
-#define But(func)  WithImpl(#func, {func})
-#define Or(func)   WithImpl(#func, {func})
-#define When(func) WhenImpl(#func, {func})
-#define Then(func) ThenImpl(#func, {func})
-
-#define Given(func) GivenA(func)
-#define WithI(func) With(func)
-#define AndI(func) And(func)
-#define ButI(func) But(func)
-#define OrI(func) Or(func)
-#define WhenI(func) When(func)
-#define ThenI(func) Then(func)
-
+#define With(func)  WithImpl(#func, {func})
+#define WithI(func) WithImpl(#func, {func})
+#define When(func)  WhenImpl(#func, {func})
+#define WhenI(func) WhenImpl(#func, {func})
+#define Then(func)  ThenImpl(#func, {func})
+#define ThenI(func) ThenImpl(#func, {func})
+#define And(func)   AndImpl(#func, {func})
+#define AndI(func)  AndImpl(#func, {func})
+#define But(func)   ButImpl(#func, {func})
+#define ButI(func)  ButImpl(#func, {func})
+#define Or(func)    OrImpl(#func, {func})
+#define OrI(func)   OrImpl(#func, {func})
 } // namespace BabyBehave::BDD
 
 #endif // BABYBEHAVE_BDD_HPP
