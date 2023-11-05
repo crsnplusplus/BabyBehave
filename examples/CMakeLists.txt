@@ -8,10 +8,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Add executable target with source files
-add_executable(AlarmClock AlarmClock.cpp)
+add_executable(example_AlarmClock AlarmClock.cpp)
 # Specify the include directory path for the header file
-target_include_directories(AlarmClock PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+target_include_directories(example_AlarmClock PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
 
 # Add executable target with source files
-add_executable(Calculator Calculator.cpp)
-target_include_directories(Calculator PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+add_executable(example_Calculator Calculator.cpp)
+target_include_directories(example_Calculator PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
