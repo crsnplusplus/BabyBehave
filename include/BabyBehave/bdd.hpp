@@ -12,6 +12,7 @@
 #include <concepts>
 #include <iostream>
 
+
 namespace BabyBehave::BDD {
 
     class TestContext {
@@ -69,8 +70,7 @@ namespace BabyBehave::BDD {
 
         BabyBehaveTest(const std::string& testName, std::function<void(TestContext&)> contextSetupFn)
             : m_testName(testName),
-            m_contextSetupFn(contextSetupFn) {
-
+              m_contextSetupFn(contextSetupFn) {
         }
 
         ~BabyBehaveTest() {
@@ -103,7 +103,7 @@ namespace BabyBehave::BDD {
                     }, step.second);
             }
 
-            std::cout  << std::endl;
+            std::cout << std::endl;
         }
 
         template<IsPrecondition T>
@@ -133,15 +133,17 @@ namespace BabyBehave::BDD {
 
     private:
         std::string m_testName;
+        std::function<void(TestContext&)> m_contextSetupFn;
         TestContext m_context;
         std::vector<Step> m_steps;
-        std::function<void(TestContext&)> m_contextSetupFn;
     };
 
 
-    inline BabyBehaveTest GivenAImpl(const std::string& testName, std::function<void(TestContext&)> contextSetup) {
+    inline BabyBehaveTest GivenAImpl(const std::string& testName,
+        std::function<void(TestContext&)> contextSetup) {
         return BabyBehaveTest(testName, contextSetup);
     }
+
 
 #define GivenA(func) GivenAImpl(#func, {func})
 #define With(func) WithImpl(#func, {func})
