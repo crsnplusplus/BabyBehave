@@ -10,3 +10,6 @@ target_include_directories(example_AlarmClock PRIVATE "${CMAKE_CURRENT_SOURCE_DI
 
 add_executable(example_Calculator Calculator.cpp)
 target_include_directories(example_Calculator PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+
+add_executable(example_Oven Oven.cpp)
+target_include_directories(example_Oven PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
