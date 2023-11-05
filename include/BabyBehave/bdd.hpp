@@ -43,7 +43,7 @@ namespace BabyBehave::BDD {
     };
 
     struct Action {
-        using Function = std::function<void(TestContext&)>;
+        using Function = std::function<bool(TestContext&)>;
         Function fn;
     };
 
@@ -115,7 +115,7 @@ namespace BabyBehave::BDD {
         template<IsAction T>
         void executeStep(const std::string& name, const T& step) {
             std::cout << "    When: " << name << std::endl;
-            step.fn(m_context);
+            VerifyCondition(step.fn(m_context), "Action failed");
         }
 
         template<IsPostcondition T>
@@ -147,8 +147,19 @@ namespace BabyBehave::BDD {
 
 #define GivenA(func) GivenAImpl(#func, {func})
 #define With(func) WithImpl(#func, {func})
+#define And(func)  WithImpl(#func, {func})
+#define But(func)  WithImpl(#func, {func})
+#define Or(func)   WithImpl(#func, {func})
 #define When(func) WhenImpl(#func, {func})
 #define Then(func) ThenImpl(#func, {func})
+
+#define Given(func) GivenA(func)
+#define WithI(func) With(func)
+#define AndI(func) And(func)
+#define ButI(func) But(func)
+#define OrI(func) Or(func)
+#define WhenI(func) When(func)
+#define ThenI(func) Then(func)
 
 } // namespace BabyBehave::BDD
 

@@ -52,9 +52,10 @@ bool TimeSetAt9PM(TestContext& context) {
     return true;
 }
 
-void TimeReaches7AM(TestContext& context) {
+bool TimeReaches7AM(TestContext& context) {
     auto alarmClock = context.Get<std::shared_ptr<AlarmClock>>("AlarmClock");
     alarmClock->SetCurrentTime(7, 0);
+    return true;
 }
 
 bool AlarmWillRing(TestContext& context) {
