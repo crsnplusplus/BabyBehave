@@ -37,35 +37,14 @@ namespace BabyBehave::BDD {
         }
     };
 
-    struct Precondition {
-        using Function = std::function<bool(TestContext&)>;
-        Function fn;
-    };
+    using StepFunction = std::function<bool(TestContext&)>;
 
-    struct Action {
-        using Function = std::function<bool(TestContext&)>;
-        Function fn;
-    };
-
-    struct Postcondition {
-        using Function = std::function<bool(TestContext&)>;
-        Function fn;
-    };
-
-    struct And {
-        using Function = std::function<bool(TestContext&)>;
-        Function fn;
-    };
-
-    struct Or {
-        using Function = std::function<bool(TestContext&)>;
-        Function fn;
-    };
-
-    struct But {
-        using Function = std::function<bool(TestContext&)>;
-        Function fn;
-    };
+    struct Precondition { StepFunction fn; };
+    struct Action { StepFunction fn; };
+    struct Postcondition { StepFunction fn; };
+    struct And { StepFunction fn; };
+    struct Or { StepFunction fn; };
+    struct But { StepFunction fn; };
 
     template<typename T>
     concept IsPrecondition = std::same_as<T, Precondition>;
@@ -117,33 +96,11 @@ namespace BabyBehave::BDD {
             m_onExceptionCallback = callback;
         }
 
-        BabyBehaveTest& WithImpl(const std::string& name, Precondition precondition) {
-            m_steps.push_back({ name, precondition });
-            return *this;
-        }
-
-        BabyBehaveTest& WhenImpl(const std::string& name, Action action) {
-            m_steps.push_back({ name, action });
-            return *this;
-        }
-
-        BabyBehaveTest& ThenImpl(const std::string& name, Postcondition postcondition) {
-            m_steps.push_back({ name, postcondition });
-            return *this;
-        }
-
-        BabyBehaveTest& AndImpl(const std::string& name, And andAction) {
-            m_steps.push_back({ name, andAction });
-            return *this;
-        }
-
-        BabyBehaveTest& OrImpl(const std::string& name, Or orAction) {
-            m_steps.push_back({ name, orAction });
-            return *this;
-        }
-
-        BabyBehaveTest& ButImpl(const std::string& name, But butAction) {
-            m_steps.push_back({ name, butAction });
+        // Definizione del template per aggiungere qualsiasi tipo di step
+        template<typename StepType>
+        BabyBehaveTest& AddStep(const std::string& name, const typename StepFunction& stepFunction) {
+            StepVariant step = StepType{ stepFunction };
+            m_steps.push_back({ name, step });
             return *this;
         }
 
@@ -165,6 +122,7 @@ namespace BabyBehave::BDD {
 
             std::cout << std::endl;
         }
+
 
         template<IsPrecondition T>
         void executeStep(const std::string& name, const T& step) {
@@ -255,21 +213,20 @@ namespace BabyBehave::BDD {
         return BabyBehaveTest(testName, contextSetup);
     }
 
-
-#define Given(func) GivenAImpl(#func, {func})
+#define Given(func)  GivenAImpl(#func, {func})
 #define GivenA(func) GivenAImpl(#func, {func})
-#define With(func)  WithImpl(#func, {func})
-#define WithI(func) WithImpl(#func, {func})
-#define When(func)  WhenImpl(#func, {func})
-#define WhenI(func) WhenImpl(#func, {func})
-#define Then(func)  ThenImpl(#func, {func})
-#define ThenI(func) ThenImpl(#func, {func})
-#define And(func)   AndImpl(#func, {func})
-#define AndI(func)  AndImpl(#func, {func})
-#define But(func)   ButImpl(#func, {func})
-#define ButI(func)  ButImpl(#func, {func})
-#define Or(func)    OrImpl(#func, {func})
-#define OrI(func)   OrImpl(#func, {func})
+#define With(func)  AddStep<Precondition>(#func, {func})
+#define WithI(func) AddStep<Precondition>(#func, {func})
+#define When(func)  AddStep<Action>(#func, {func})
+#define WhenI(func) AddStep<Action>(#func, {func})
+#define Then(func)  AddStep<Postcondition>(#func, {func})
+#define ThenI(func) AddStep<Postcondition>(#func, {func})
+#define And(func)   AddStep<And>(#func, {func})
+#define AndI(func)  AddStep<And>(#func, {func})
+#define But(func)   AddStep<But>(#func, {func})
+#define ButI(func)  AddStep<But>(#func, {func})
+#define Or(func)    AddStep<Or>(#func, {func})
+#define OrI(func)   AddStep<Or>(#func, {func})
 } // namespace BabyBehave::BDD
 
 #endif // BABYBEHAVE_BDD_HPP
