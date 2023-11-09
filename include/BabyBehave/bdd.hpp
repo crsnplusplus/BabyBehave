@@ -77,11 +77,12 @@ namespace BabyBehave::BDD {
             m_onConditionNotVerifiedCallback = [](const std::string& errorMsg) {
                 std::cerr << errorMsg << std::endl;
                 std::exit(EXIT_FAILURE);
-                };
-            m_onExceptionCallback = [](const std::string& errorMsg) {
-                std::cerr << errorMsg << std::endl;
+            };
+            m_onExceptionCallback = [](const std::string& step, const std::exception& e) {
+                std::cerr << "Exception caught in " << step << ":" 
+                          << std::string(e.what()) << std::endl;
                 std::exit(EXIT_FAILURE);
-                };
+            };
         }
 
         ~BabyBehaveTest() {
@@ -92,7 +93,7 @@ namespace BabyBehave::BDD {
             m_onConditionNotVerifiedCallback = callback;
         }
 
-        void SetOnExceptionCallback(std::function<void(const std::string& errorMsg)> callback) {
+        void SetOnExceptionCallback(std::function<void(const std::string& msg, const std::exception&)> callback) {
             m_onExceptionCallback = callback;
         }
 
@@ -123,6 +124,17 @@ namespace BabyBehave::BDD {
             std::cout << std::endl;
         }
 
+        template<typename T>
+        void executeStep(const std::string& name, const T& step) {
+            std::cout << "    " << typeid(T).name() << ": " << name << std::endl;
+            try {
+                VerifyCondition(step(m_context), typeid(T).name() + " failed");
+            }
+            catch (const std::exception& e) {
+                m_onExceptionCallback("Exception caught in " + typeid(T).name() + ": " + std::string(e.what()));
+            }
+        }
+
 
         template<IsPrecondition T>
         void executeStep(const std::string& name, const T& step) {
@@ -131,7 +143,7 @@ namespace BabyBehave::BDD {
                 VerifyCondition(step.fn(m_context), "Precondition failed");
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in Precondition: " + std::string(e.what()));
+                m_onExceptionCallback("Precondition", e);
             }
         }
 
@@ -142,7 +154,7 @@ namespace BabyBehave::BDD {
                 VerifyCondition(step.fn(m_context), "Action failed");
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in Action: " + std::string(e.what()));
+                m_onExceptionCallback("Action", e);
             }
         }
 
@@ -153,7 +165,7 @@ namespace BabyBehave::BDD {
                 VerifyCondition(step.fn(m_context), "Precondition failed");
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in Precondition: " + std::string(e.what()));
+                m_onExceptionCallback("Precondition", e);
             }
         }
 
@@ -164,7 +176,7 @@ namespace BabyBehave::BDD {
                 VerifyCondition(step.fn(m_context), "And condition failed");
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in And condition: " + std::string(e.what()));
+                m_onExceptionCallback("And condition" , e);
             }
         }
 
@@ -175,7 +187,7 @@ namespace BabyBehave::BDD {
                 VerifyCondition(step.fn(m_context), "Or condition failed");
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in Or condition: " + std::string(e.what()));
+                m_onExceptionCallback("Or condition", e);
             }
         }
 
@@ -186,7 +198,7 @@ namespace BabyBehave::BDD {
                 VerifyCondition(step.fn(m_context), "But condition failed");
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in But condition: " + std::string(e.what()));
+                m_onExceptionCallback("But condition", e);
             }
         }
 
@@ -204,7 +216,7 @@ namespace BabyBehave::BDD {
         std::vector<Step> m_steps;
 
         std::function<void(const std::string& errorMsg)> m_onConditionNotVerifiedCallback;
-        std::function<void(const std::string& errorMsg)> m_onExceptionCallback;
+        std::function<void(const std::string& step, const std::exception&)> m_onExceptionCallback;
     };
 
 
