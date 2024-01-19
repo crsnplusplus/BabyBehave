@@ -30,8 +30,8 @@ namespace BabyBehave::BDD {
             auto it = m_objects.find(key);
             if (it == m_objects.end()) {
                 auto errorMsg = "Key not found: " + key;
-                std::cout << errorMsg << std::endl;
-                throw std::runtime_error(errorMsg);
+                std::cerr << errorMsg << std::endl;
+                throw std::out_of_range(errorMsg);
             }
             return std::any_cast<T>(it->second);
         }
@@ -104,6 +104,10 @@ namespace BabyBehave::BDD {
             m_steps.push_back({ name, step });
             return *this;
         }
+
+        std::vector<Step> GetSteps() const {
+            return m_steps;
+        } 
 
     private:
         void Execute() {
