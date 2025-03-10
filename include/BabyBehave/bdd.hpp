@@ -99,7 +99,7 @@ namespace BabyBehave::BDD {
 
         // Definizione del template per aggiungere qualsiasi tipo di step
         template<typename StepType>
-        BabyBehaveTest& AddStep(const std::string& name, const typename StepFunction& stepFunction) {
+        BabyBehaveTest& AddStep(const std::string& name, const StepFunction& stepFunction) {
             StepVariant step = StepType{ stepFunction };
             m_steps.push_back({ name, step });
             return *this;
@@ -132,10 +132,11 @@ namespace BabyBehave::BDD {
         void executeStep(const std::string& name, const T& step) {
             std::cout << "    " << typeid(T).name() << ": " << name << std::endl;
             try {
-                VerifyCondition(step(m_context), typeid(T).name() + " failed");
+                VerifyCondition(step(m_context), typeid(T).name() + std::string(" failed") );
             }
             catch (const std::exception& e) {
-                m_onExceptionCallback("Exception caught in " + typeid(T).name() + ": " + std::string(e.what()));
+                auto message = std::string("Exception caught in ") + typeid(T).name() + std::string(": ") + std::string(e.what());
+                m_onExceptionCallback(message, e);
             }
         }
 
