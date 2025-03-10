@@ -1,5 +1,6 @@
 #include <BabyBehave/bdd.hpp>
 #include <chrono>
+#include <thread>
 
 using namespace BabyBehave::BDD;
 
