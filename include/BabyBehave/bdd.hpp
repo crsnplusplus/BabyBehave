@@ -97,7 +97,6 @@ namespace BabyBehave::BDD {
             m_onExceptionCallback = callback;
         }
 
-        // Definizione del template per aggiungere qualsiasi tipo di step
         template<typename StepType>
         BabyBehaveTest& AddStep(const std::string& name, const StepFunction& stepFunction) {
             StepVariant step = StepType{ stepFunction };
