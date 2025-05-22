@@ -1,8 +1,10 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.20)
 
 project(BabyBehaveTests)
 
 set(CMAKE_CXX_STANDARD 20)
+
+enable_testing()
 
 include(FetchContent)
 FetchContent_Declare(
@@ -15,10 +17,9 @@ FetchContent_MakeAvailable(googletest)
 add_executable(test_TestContext test_Testcontext.cpp)
 target_include_directories(test_TestContext PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
 target_link_libraries(test_TestContext gtest_main)
+add_test(TestContext test_TestContext)
 
 add_executable(test_BabyBehaveTest test_BabyBehaveTest.cpp)
 target_include_directories(test_BabyBehaveTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
 target_link_libraries(test_BabyBehaveTest gtest_main)
-
-
-enable_testing()
+add_test(BabyBehaveTest test_BabyBehaveTest)
