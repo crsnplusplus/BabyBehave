@@ -11,7 +11,7 @@ public:
         m_alarmMinute = minute;
     }
 
-    bool IsTimeToRing() {
+    bool IsTimeToRing() const {
         return m_hour == m_alarmHour && m_minute == m_alarmMinute;
     }
 
