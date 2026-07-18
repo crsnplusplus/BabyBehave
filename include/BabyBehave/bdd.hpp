@@ -15,6 +15,9 @@
 #include <type_traits>
 #include <iostream>
 #include <cstdlib>
+#include <numeric>
+#include <utility>
+#include <iterator>
 #include <version>
 #if defined(__cpp_lib_print)
 #include <print>
@@ -34,7 +37,32 @@ namespace BabyBehave::BDD {
         // consistency with the string constants below it.
         inline constexpr char kNewLine = '\n';
 
+        // Runtime toggle for whether PrintLine() below actually writes
+        // anything. Defaults to enabled - unchanged behavior for every
+        // existing consumer, and the whole point of self-hosted examples
+        // like examples/SelfTest.cpp - but can be silenced, which matters
+        // when a BabyBehaveTest runs inside a gtest suite: its step
+        // narration otherwise interleaves with gtest's own "[ RUN ]"/
+        // "[ OK ]" lines. Read once from the BABYBEHAVE_QUIET environment
+        // variable (any non-empty value other than "0" disables) and
+        // cached in this function-local static; BabyBehave::BDD::
+        // SetNarrationEnabled() below can also flip it at runtime. CTest
+        // sets BABYBEHAVE_QUIET=1 as a per-test environment variable on
+        // the gtest-based suites (see tests/CMakeLists.txt), so running
+        // one of those binaries directly - bypassing ctest - still shows
+        // narration for debugging.
+        inline bool& NarrationEnabledFlag() {
+            static bool enabled = [] {
+                const char* env = std::getenv("BABYBEHAVE_QUIET");
+                return env == nullptr || env[0] == '\0' || std::string_view(env) == "0";
+            }();
+            return enabled;
+        }
+
         inline void PrintLine(const std::string& text) {
+            if (!NarrationEnabledFlag()) {
+                return;
+            }
 #if defined(__cpp_lib_print)
             std::println("{}", text);
 #else
@@ -43,11 +71,287 @@ namespace BabyBehave::BDD {
         }
 
         inline void PrintLine() {
+            if (!NarrationEnabledFlag()) {
+                return;
+            }
 #if defined(__cpp_lib_print)
             std::println();
 #else
             std::cout << kNewLine;
 #endif
+        }
+
+        // Same toggle as PrintLine() above, for BabyBehave's own std::cerr
+        // diagnostics (a missing TestContext key, a default failure
+        // callback firing, a user callback itself throwing) - these are
+        // just as noisy interleaved with gtest's output as the step
+        // narration is, and gated the same way. Never suppresses the
+        // exception/message data itself (e.g. TestContext::Get()'s thrown
+        // std::out_of_range, or a death test's exit code): only this
+        // extra, human-facing console line.
+        inline void PrintErrorLine(const std::string& text) {
+            if (!NarrationEnabledFlag()) {
+                return;
+            }
+            std::cerr << text << kNewLine;
+        }
+
+        // Which text representation BabyBehaveTest's step narration uses.
+        // Plain is the original, unstyled format (kGivenPrefix and friends
+        // below) - live, printed one line at a time as each step runs,
+        // byte-identical to every version of this file before this enum
+        // existed. Arrow and Tree are opt-in, structured renderers (see
+        // RenderArrow()/RenderTree() below): rather than printing
+        // progressively, they buffer each step's kind and name as it runs
+        // (see BabyBehaveTest::m_narrationSteps) and render the whole
+        // scenario as one "[ OK ]"/"[ FAIL ] "-headed block once the
+        // outcome is known - either at the natural end of Execute() (every
+        // step passed, or a non-exiting callback absorbed every failure),
+        // or never, if the true default (exit-on-failure) callback fires
+        // first. That is a deliberate trade-off of choosing a buffered
+        // style: Plain always shows which step it was on before a hang or
+        // a hard exit; Arrow/Tree only show their summary if Execute()
+        // gets to return.
+        enum class NarrationStyle {
+            Plain,
+            Arrow,
+            Tree,
+        };
+
+        // Maps BABYBEHAVE_STYLE's raw value to a NarrationStyle
+        // ("plain"/"arrow"/"tree", case-sensitive; nullptr or anything
+        // else defaults to Plain). Pulled out of NarrationStyleFlag()
+        // below as a pure function - unlike NarrationEnabledFlag()'s
+        // env-var branches (only two, and naturally exercised by
+        // whichever ctest binaries do/don't set BABYBEHAVE_QUIET), this
+        // has four distinct outcomes that would otherwise need their own
+        // dedicated per-value process/environment just to reach for
+        // coverage; as a pure function every case is one direct call.
+        inline NarrationStyle ParseNarrationStyleEnv(const char* env) {
+            if (env == nullptr) {
+                return NarrationStyle::Plain;
+            }
+            const std::string_view value(env);
+            if (value == "arrow") {
+                return NarrationStyle::Arrow;
+            }
+            if (value == "tree") {
+                return NarrationStyle::Tree;
+            }
+            return NarrationStyle::Plain;
+        }
+
+        // Read once from BABYBEHAVE_STYLE and cached, same pattern as
+        // NarrationEnabledFlag() above. BabyBehave::BDD::
+        // SetNarrationStyle() below can override it at runtime.
+        inline NarrationStyle& NarrationStyleFlag() {
+            static NarrationStyle style = ParseNarrationStyleEnv(std::getenv("BABYBEHAVE_STYLE"));
+            return style;
+        }
+
+        // Identifies which fluent method produced a buffered narration
+        // step (see BabyBehaveTest::m_narrationSteps), for the Arrow/Tree
+        // renderers below. Given has no tag here: there is always exactly
+        // one, it is never buffered (BabyBehaveTest::m_testName already
+        // holds its name), and it roots the Tree renderer's layout
+        // specially rather than appearing in the step list.
+        enum class StepKindTag {
+            With,
+            When,
+            Then,
+            And,
+            Or,
+            But,
+        };
+
+        // True for the "detail" steps (Precondition/And/Or/But) that the
+        // Tree renderer nests one level under a primary step (With under
+        // GIVEN; And/Or/But under THEN) and that the Arrow renderer marks
+        // with "+"; false for the primary Given/When/Then steps, which
+        // Tree always renders as top-level siblings and Arrow marks with
+        // "->".
+        inline bool IsNarrationDetailKind(StepKindTag kind) {
+            return kind == StepKindTag::With || kind == StepKindTag::And ||
+                   kind == StepKindTag::Or || kind == StepKindTag::But;
+        }
+
+        // std::unreachable() (rather than a trailing "return \"\";") after
+        // an exhaustive switch over every StepKindTag enumerator: falling
+        // off the end here is genuinely impossible, not just unhandled,
+        // and a dead defensive return is an uncoverable gcov line with no
+        // corresponding test that could ever legitimately reach it.
+        inline std::string_view ArrowKindWord(StepKindTag kind) {
+            switch (kind) {
+                case StepKindTag::With: return "With";
+                case StepKindTag::When: return "When";
+                case StepKindTag::Then: return "Then";
+                case StepKindTag::And: return "And";
+                case StepKindTag::Or: return "Or";
+                case StepKindTag::But: return "But";
+            }
+            std::unreachable();
+        }
+
+        inline std::string_view TreeKindLabel(StepKindTag kind) {
+            switch (kind) {
+                case StepKindTag::With: return "WITH";
+                case StepKindTag::When: return "WHEN";
+                case StepKindTag::Then: return "THEN";
+                case StepKindTag::And: return "AND";
+                case StepKindTag::Or: return "OR";
+                case StepKindTag::But: return "BUT";
+            }
+            std::unreachable();
+        }
+
+        // One step buffered by BabyBehaveTest::NarrateStep() for the
+        // Arrow/Tree renderers - see NarrationStyle above for why this
+        // buffers instead of printing immediately.
+        struct NarrationStepEntry {
+            StepKindTag kind;
+            std::string name;
+        };
+
+        // Both callers below always push at least one line before calling
+        // this, so lines is never empty here. Folds via std::accumulate
+        // rather than a hand-written loop over a named std::string local:
+        // the latter left a same-named local alive across the whole
+        // function body, which GCC's --coverage instrumentation marks as
+        // an unreachable-looking exception-cleanup line at the closing
+        // brace (visible in gcov as "=====", counted as uncovered) even
+        // though the function runs to completion on every call - the
+        // fold's accumulator lives inside <numeric>'s template code
+        // instead, outside what gcov attributes to this file.
+        inline std::string JoinNarrationLines(const std::vector<std::string>& lines) {
+            return std::accumulate(std::next(lines.begin()), lines.end(), lines.front(),
+                                    [](std::string acc, const std::string& line) { return acc + kNewLine + line; });
+        }
+
+        // "-> Given a: X" / "    + With: Y" / "    -> When: Z" /
+        // "    -> Then: W" / "    + And: V" - see NarrationStyle above for
+        // the buffering model and IsNarrationDetailKind() for the "->" vs
+        // "+" rule (Given/When/Then get "->"; With/And/Or/But get "+").
+        inline std::string RenderArrow(const std::string& testName, const std::vector<NarrationStepEntry>& steps, bool passed) {
+            std::vector<std::string> lines;
+            lines.push_back(std::string(passed ? "[ OK ] " : "[ FAIL ] ") + testName);
+            lines.push_back("-> Given a: " + testName);
+            for (const auto& entry : steps) {
+                std::string line = "    ";
+                line += IsNarrationDetailKind(entry.kind) ? "+ " : "-> ";
+                line += ArrowKindWord(entry.kind);
+                line += ": ";
+                line += entry.name;
+                lines.push_back(std::move(line));
+            }
+            return JoinNarrationLines(lines);
+        }
+
+        // Left-justifies a Tree step label to a fixed field width so every
+        // step name in the rendered block starts in the same column
+        // (GIVEN/WITH/WHEN/THEN/AND/OR/BUT all fit within 7 characters).
+        // Single return expression, no named local - see
+        // JoinNarrationLines() above for why that matters for coverage.
+        inline std::string PadTreeLabel(std::string_view label) {
+            constexpr std::size_t kFieldWidth = 7;
+            return label.size() < kFieldWidth ? std::string(label) + std::string(kFieldWidth - label.size(), ' ')
+                                               : std::string(label);
+        }
+
+        // Box-drawing/check-mark glyphs, spelled as \u escapes rather than
+        // literal UTF-8 source bytes: \u universal-character-names are
+        // portable across editors/tools that don't preserve raw multibyte
+        // source bytes, and are what MSVC's /utf-8 flag (see the root
+        // CMakeLists.txt) needs to correctly encode into the execution
+        // charset - a literal glyph in the source risks being misread there.
+        inline constexpr std::string_view kTreeCheckMark = "\u2713";         // CHECK MARK
+        inline constexpr std::string_view kTreeCrossMark = "\u2717";        // BALLOT X
+        inline constexpr std::string_view kTreeVerticalBar = "\u2502";      // BOX DRAWINGS LIGHT VERTICAL
+        inline constexpr std::string_view kTreeBranchMid = "\u251c\u2500 "; // VERTICAL-AND-RIGHT, HORIZONTAL, space
+        inline constexpr std::string_view kTreeBranchLast = "\u2570\u2500 "; // ARC-UP-AND-RIGHT, HORIZONTAL, space
+
+        // One top-level branch of the Tree renderer below, beyond GIVEN
+        // itself: a WHEN step (never has children - nothing nests under
+        // it) or a THEN step (its And/Or/But entries nest under it, see
+        // RenderTree()). label/name point into the caller's data, not
+        // owned here.
+        struct TreeBranch {
+            std::string_view label;
+            const std::string* name;
+            const std::vector<const NarrationStepEntry*>* children;
+        };
+
+        // Unicode box-drawing tree: GIVEN, WHEN and THEN are always
+        // top-level siblings (in that order); WITH nests one level under
+        // GIVEN, and And/Or/But nest one level under THEN (under the
+        // *last* THEN entry, if the caller buffered more than one - see
+        // NarrationStyle above for the buffering model). If And/Or/But
+        // steps were recorded with no THEN at all, they're promoted to
+        // their own top-level branches instead of being dropped. Indent
+        // is a fixed 2 spaces regardless of the "[ OK ]"/"[ FAIL ]"
+        // header's width, so the tree body always lines up the same way.
+        inline std::string RenderTree(const std::string& testName, const std::vector<NarrationStepEntry>& steps, bool passed) {
+            static constexpr std::string_view kIndent = "  ";
+            static const std::vector<const NarrationStepEntry*> kNoChildren;
+
+            std::vector<const NarrationStepEntry*> givenChildren;
+            std::vector<const NarrationStepEntry*> whenEntries;
+            std::vector<const NarrationStepEntry*> thenEntries;
+            std::vector<const NarrationStepEntry*> thenChildren;
+            for (const auto& entry : steps) {
+                switch (entry.kind) {
+                    case StepKindTag::With: givenChildren.push_back(&entry); break;
+                    case StepKindTag::When: whenEntries.push_back(&entry); break;
+                    case StepKindTag::Then: thenEntries.push_back(&entry); break;
+                    default: thenChildren.push_back(&entry); break; // And/Or/But
+                }
+            }
+
+            std::vector<TreeBranch> branches;
+            for (const auto* entry : whenEntries) {
+                branches.push_back(TreeBranch{ TreeKindLabel(StepKindTag::When), &entry->name, &kNoChildren });
+            }
+            if (thenEntries.empty()) {
+                for (const auto* entry : thenChildren) {
+                    branches.push_back(TreeBranch{ TreeKindLabel(entry->kind), &entry->name, &kNoChildren });
+                }
+            } else {
+                for (std::size_t i = 0; i < thenEntries.size(); ++i) {
+                    const bool isLastThen = (i + 1 == thenEntries.size());
+                    branches.push_back(TreeBranch{ TreeKindLabel(StepKindTag::Then), &thenEntries[i]->name,
+                                                    isLastThen ? &thenChildren : &kNoChildren });
+                }
+            }
+            const bool givenIsLastGroup = branches.empty();
+
+            std::vector<std::string> lines;
+            lines.push_back((passed ? "[ " + std::string(kTreeCheckMark) + " OK ] " : "[ " + std::string(kTreeCrossMark) + " FAIL ] ") + testName);
+            lines.push_back(std::string(kIndent) + std::string(kTreeVerticalBar));
+            lines.push_back(std::string(kIndent) + std::string(givenIsLastGroup ? kTreeBranchLast : kTreeBranchMid) + PadTreeLabel("GIVEN") + testName);
+
+            const std::string givenChildContinuation = givenIsLastGroup ? "   " : std::string(kTreeVerticalBar) + "  ";
+            for (std::size_t i = 0; i < givenChildren.size(); ++i) {
+                const bool lastChild = (i + 1 == givenChildren.size());
+                lines.push_back(std::string(kIndent) + givenChildContinuation +
+                                 std::string(lastChild ? kTreeBranchLast : kTreeBranchMid) +
+                                 PadTreeLabel(TreeKindLabel(givenChildren[i]->kind)) + givenChildren[i]->name);
+            }
+
+            for (std::size_t i = 0; i < branches.size(); ++i) {
+                const bool lastBranch = (i + 1 == branches.size());
+                lines.push_back(std::string(kIndent) + std::string(kTreeVerticalBar));
+                lines.push_back(std::string(kIndent) + std::string(lastBranch ? kTreeBranchLast : kTreeBranchMid) +
+                                 PadTreeLabel(branches[i].label) + *branches[i].name);
+
+                const std::string branchChildContinuation = lastBranch ? "   " : std::string(kTreeVerticalBar) + "  ";
+                const auto& children = *branches[i].children;
+                for (std::size_t c = 0; c < children.size(); ++c) {
+                    const bool lastGrandchild = (c + 1 == children.size());
+                    lines.push_back(std::string(kIndent) + branchChildContinuation +
+                                     std::string(lastGrandchild ? kTreeBranchLast : kTreeBranchMid) +
+                                     PadTreeLabel(TreeKindLabel(children[c]->kind)) + children[c]->name);
+                }
+            }
+            return JoinNarrationLines(lines);
         }
 
 #if defined(__cpp_lib_source_location)
@@ -178,6 +482,33 @@ namespace BabyBehave::BDD {
         };
     } // namespace detail
 
+    // Enables/disables BabyBehaveTest's step narration ("Given a: .../
+    // With: .../When: .../Then: ...", printed as each step runs). Process-
+    // wide and takes effect immediately (including for scenarios already
+    // under construction). Defaults to enabled unless BABYBEHAVE_QUIET was
+    // set before the first print - see detail::NarrationEnabledFlag()
+    // above for the full rationale (mainly: silencing this inside a gtest
+    // suite, where it would otherwise interleave with gtest's own output).
+    inline void SetNarrationEnabled(bool enabled) {
+        detail::NarrationEnabledFlag() = enabled;
+    }
+
+    // Publicly-spelled alias for detail::NarrationStyle (defined next to
+    // detail::PrintLine()/PrintErrorLine() above, which is where the
+    // Plain/Arrow/Tree formats and their live-vs-buffered trade-off are
+    // documented) - callers write BabyBehave::BDD::NarrationStyle::Tree,
+    // not the detail:: form.
+    using NarrationStyle = detail::NarrationStyle;
+
+    // Selects which text representation BabyBehaveTest's step narration
+    // uses (Plain/Arrow/Tree). Process-wide, takes effect immediately, and
+    // only matters while narration is enabled (see SetNarrationEnabled()
+    // above) - see NarrationStyle above for what each style looks like and
+    // the live-vs-buffered trade-off between them.
+    inline void SetNarrationStyle(NarrationStyle style) {
+        detail::NarrationStyleFlag() = style;
+    }
+
     // Outcome of one named sub-check recorded via SoftCheck::Check() (see
     // SoftCheck below). label/message are exactly what was passed to
     // Check(); passed is the condition that was recorded for it.
@@ -254,7 +585,7 @@ namespace BabyBehave::BDD {
             auto it = m_objects.find(key);
             if (it == m_objects.end()) {
                 const auto errorMsg = std::string(detail::kKeyNotFoundPrefix) + std::string(key);
-                std::cerr << errorMsg << detail::kNewLine;
+                detail::PrintErrorLine(errorMsg);
                 throw std::out_of_range(errorMsg);
             }
             return std::any_cast<T>(it->second);
@@ -560,7 +891,12 @@ namespace BabyBehave::BDD {
             }
             m_executed = true;
 
-            detail::PrintLine(std::string(detail::kGivenPrefix) + m_testName);
+            // Plain prints Given immediately, like every step below; Arrow/
+            // Tree need nothing here (m_testName already holds Given's name
+            // - see RenderArrow()/RenderTree()'s callers below).
+            if (detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
+                detail::PrintLine(std::string(detail::kGivenPrefix) + m_testName);
+            }
             try {
                 m_contextSetupFn(m_context);
             }
@@ -581,7 +917,20 @@ namespace BabyBehave::BDD {
                     }, step.second);
             }
 
-            detail::PrintLine();
+            // Plain's trailing blank line, unchanged; Arrow/Tree instead
+            // render everything buffered above as one block, now that the
+            // outcome (m_anyStepFailedForNarration) is known - see
+            // NarrationStyle's comment for why this point in Execute() is
+            // the only place that happens (a real exit-on-failure default
+            // callback never lets control reach here).
+            if (detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
+                detail::PrintLine();
+            } else {
+                const bool passed = !m_anyStepFailedForNarration;
+                detail::PrintLine(detail::NarrationStyleFlag() == detail::NarrationStyle::Tree
+                                       ? detail::RenderTree(m_testName, m_narrationSteps, passed)
+                                       : detail::RenderArrow(m_testName, m_narrationSteps, passed));
+            }
             return m_result;
         }
 
@@ -598,14 +947,28 @@ namespace BabyBehave::BDD {
         void InitDefaultCallbacks() {
             m_result.testName = m_testName;
             m_onConditionNotVerifiedCallback = [](const std::string& errorMsg) {
-                std::cerr << errorMsg << detail::kNewLine;
+                detail::PrintErrorLine(errorMsg);
                 std::exit(EXIT_FAILURE);
             };
             m_onExceptionCallback = [](const std::string& step, const std::exception& e) {
-                std::cerr << detail::kDefaultExceptionCallbackPrefix << step << ":"
-                          << std::string(e.what()) << detail::kNewLine;
+                detail::PrintErrorLine(std::string(detail::kDefaultExceptionCallbackPrefix) + step + ":" + e.what());
                 std::exit(EXIT_FAILURE);
             };
+        }
+
+        // Called by each executeStep() branch below as its step begins.
+        // Plain prints plainPrefix + name immediately, exactly as every
+        // version of this file before NarrationStyle existed; Arrow/Tree
+        // instead buffer (kind, name) into m_narrationSteps for
+        // RenderArrow()/RenderTree() to consume once Execute() knows the
+        // outcome (see NarrationStyle's comment for why that's later, not
+        // here).
+        void NarrateStep(detail::StepKindTag kind, std::string_view plainPrefix, const std::string& name) {
+            if (detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
+                detail::PrintLine(std::string(plainPrefix) + name);
+            } else {
+                m_narrationSteps.push_back(detail::NarrationStepEntry{ .kind = kind, .name = name });
+            }
         }
 
         // High cognitive-complexity score is inherent, not accidental: this
@@ -635,7 +998,7 @@ namespace BabyBehave::BDD {
             // (and, for And/Or/But, two) throwaway std::string objects per
             // step regardless of outcome.
             if constexpr (std::is_same_v<T, Precondition>) {
-                detail::PrintLine(std::string(detail::kWithPrefix) + name);
+                NarrateStep(detail::StepKindTag::With, detail::kWithPrefix, name);
                 try {
                     VerifyCondition(step.fn(m_context), detail::kPreconditionFailedMessage, detail::kPreconditionLabel, name, location);
                 }
@@ -647,7 +1010,7 @@ namespace BabyBehave::BDD {
                     SafeInvokeExceptionCallback(detail::kPreconditionLabel, unknownEx, detail::kPreconditionLabel, name, location);
                 }
             } else if constexpr (std::is_same_v<T, Action>) {
-                detail::PrintLine(std::string(detail::kWhenPrefix) + name);
+                NarrateStep(detail::StepKindTag::When, detail::kWhenPrefix, name);
                 try {
                     VerifyCondition(step.fn(m_context), detail::kActionFailedMessage, detail::kActionLabel, name, location);
                 }
@@ -659,7 +1022,7 @@ namespace BabyBehave::BDD {
                     SafeInvokeExceptionCallback(detail::kActionLabel, unknownEx, detail::kActionLabel, name, location);
                 }
             } else if constexpr (std::is_same_v<T, Postcondition>) {
-                detail::PrintLine(std::string(detail::kThenPrefix) + name);
+                NarrateStep(detail::StepKindTag::Then, detail::kThenPrefix, name);
                 try {
                     VerifyCondition(step.fn(m_context), detail::kPostconditionFailedMessage, detail::kPostconditionLabel, name, location);
                 }
@@ -671,7 +1034,7 @@ namespace BabyBehave::BDD {
                     SafeInvokeExceptionCallback(detail::kPostconditionLabel, unknownEx, detail::kPostconditionLabel, name, location);
                 }
             } else if constexpr (std::is_same_v<T, And>) {
-                detail::PrintLine(std::string(detail::kAndPrefix) + name);
+                NarrateStep(detail::StepKindTag::And, detail::kAndPrefix, name);
                 try {
                     VerifyCondition(step.fn(m_context), detail::kAndConditionFailedMessage, detail::kAndLabel, name, location);
                 }
@@ -683,7 +1046,7 @@ namespace BabyBehave::BDD {
                     SafeInvokeExceptionCallback(detail::kAndConditionLabel, unknownEx, detail::kAndLabel, name, location);
                 }
             } else if constexpr (std::is_same_v<T, Or>) {
-                detail::PrintLine(std::string(detail::kOrPrefix) + name);
+                NarrateStep(detail::StepKindTag::Or, detail::kOrPrefix, name);
                 try {
                     VerifyCondition(step.fn(m_context), detail::kOrConditionFailedMessage, detail::kOrLabel, name, location);
                 }
@@ -695,7 +1058,7 @@ namespace BabyBehave::BDD {
                     SafeInvokeExceptionCallback(detail::kOrConditionLabel, unknownEx, detail::kOrLabel, name, location);
                 }
             } else if constexpr (std::is_same_v<T, But>) {
-                detail::PrintLine(std::string(detail::kButPrefix) + name);
+                NarrateStep(detail::StepKindTag::But, detail::kButPrefix, name);
                 try {
                     VerifyCondition(step.fn(m_context), detail::kButConditionFailedMessage, detail::kButLabel, name, location);
                 }
@@ -789,6 +1152,12 @@ namespace BabyBehave::BDD {
                 }
                 return;
             }
+            // Every path below this point is a failure, regardless of
+            // collect-failures mode - RenderArrow()/RenderTree() read this
+            // once Execute() reaches its end to decide "[ OK ]" vs
+            // "[ FAIL ]" (see NarrationStyle's comment for why Plain
+            // doesn't need it: it never shows a header at all).
+            m_anyStepFailedForNarration = true;
             std::string augmentedMsg(errorMsg);
             AppendFailedSoftChecks(augmentedMsg);
             if (m_collectFailures) {
@@ -801,7 +1170,7 @@ namespace BabyBehave::BDD {
                 m_onConditionNotVerifiedCallback(fullMsg);
             }
             catch (...) {
-                std::cerr << detail::kOnConditionNotVerifiedCallbackThrewMessage << detail::kNewLine;
+                detail::PrintErrorLine(std::string(detail::kOnConditionNotVerifiedCallbackThrewMessage));
             }
         }
 
@@ -820,6 +1189,10 @@ namespace BabyBehave::BDD {
         void SafeInvokeExceptionCallback(std::string_view step, const std::exception& e,
                                           std::string_view stepLabel, const std::string& stepName,
                                           const std::string& location) {
+            // Always a failure - only reached from a caught exception - so
+            // this is unconditional, unlike VerifyCondition()'s flag-set
+            // above which only covers its own failure branch.
+            m_anyStepFailedForNarration = true;
             if (m_collectFailures) {
                 m_result.steps.push_back(StepResult{ .stepLabel = std::string(stepLabel), .stepName = stepName, .passed = false, .message = std::string(e.what()), .location = location });
                 m_result.allPassed = false;
@@ -834,7 +1207,7 @@ namespace BabyBehave::BDD {
                 }
             }
             catch (...) {
-                std::cerr << detail::kOnExceptionCallbackThrewMessage << detail::kNewLine;
+                detail::PrintErrorLine(std::string(detail::kOnExceptionCallbackThrewMessage));
             }
         }
 
@@ -844,6 +1217,15 @@ namespace BabyBehave::BDD {
         TestContext m_context;
         std::vector<Step> m_steps;
         std::vector<std::string> m_stepLocations;
+
+        // Populated only for the Arrow/Tree narration styles (see
+        // NarrateStep() above); stays empty under Plain, which never reads
+        // them. m_anyStepFailedForNarration mirrors m_result.allPassed but
+        // is tracked separately since collect-failures mode still needs a
+        // narration outcome even when it suppresses the exit-on-failure
+        // callback that would otherwise stop Execute() from finishing.
+        std::vector<detail::NarrationStepEntry> m_narrationSteps;
+        bool m_anyStepFailedForNarration = false;
 
         ConditionNotVerifiedCallback m_onConditionNotVerifiedCallback;
         ExceptionCallback m_onExceptionCallback;

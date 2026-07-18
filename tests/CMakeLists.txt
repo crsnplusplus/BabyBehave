@@ -56,3 +56,20 @@ target_link_libraries(test_BabyBehaveTest_NoSourceLocation BabyBehave::BabyBehav
 add_test(BabyBehaveTestNoSourceLocation test_BabyBehaveTest_NoSourceLocation)
 
 add_subdirectory(bdd)
+
+# BabyBehaveTest's step narration ("Given a: .../With: ...", printed as each
+# step runs - see bdd.hpp's PrintLine()) is the whole point of the
+# self-hosted BBH suite under bdd/, but here it just interleaves with
+# gtest's own "[ RUN ]"/"[ OK ]" output. Silenced only for ctest runs of the
+# gtest-based binaries above; running one of them directly still shows
+# narration for debugging (see bdd.hpp's SetNarrationEnabled()).
+set_tests_properties(
+  TestContext
+  BabyBehaveTest
+  BabyBehaveTestStepTypes
+  BabyBehaveTestExceptions
+  BabyBehaveTestSoftCheckAndCollectFailures
+  BabyBehaveTestCallbacksAndDeathTests
+  BabyBehaveTestNoSourceLocation
+  PROPERTIES ENVIRONMENT "BABYBEHAVE_QUIET=1"
+)

@@ -31,6 +31,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -565,6 +566,138 @@ bool RunSoftCheckDefaultCallbackScenario() {
     return asExpected;
 }
 
+// ---------------------------------------------------------------------
+// Scenario 13: BabyBehave::BDD::SetNarrationEnabled(false) silences both
+// step narration (PrintLine, "Given a: .../With: ...") and BabyBehave's
+// own diagnostic messages (PrintErrorLine, e.g. "Key not found: ...") -
+// the knob added so a BabyBehaveTest running inside a gtest suite doesn't
+// interleave its own output with gtest's. Every other scenario in this
+// file runs with narration at its default (enabled), which is what
+// exercises PrintLine's/PrintErrorLine's "actually write" branch; this is
+// the one place in this file that exercises their early-return branch.
+// ---------------------------------------------------------------------
+
+bool RunNarrationDisabledScenario() {
+    std::ostringstream capturedOut;
+    std::ostringstream capturedErr;
+    auto* const originalCoutBuf = std::cout.rdbuf(capturedOut.rdbuf());
+    auto* const originalCerrBuf = std::cerr.rdbuf(capturedErr.rdbuf());
+
+    SetNarrationEnabled(false);
+    {
+        auto test = GivenA(SetupTrivialContext);
+        test.With(StepPreconditionTrue);
+    }
+    TestContext context;
+    try {
+        (void)context.Get<int>("does_not_exist");
+    } catch (...) {
+    }
+    SetNarrationEnabled(true);
+
+    std::cout.rdbuf(originalCoutBuf);
+    std::cerr.rdbuf(originalCerrBuf);
+
+    const bool silent = capturedOut.str().empty() && capturedErr.str().empty();
+    if (!silent) {
+        std::cerr << "  NarrationDisabled: expected no stdout/stderr output while narration is disabled\n";
+    }
+    return silent;
+}
+
+// ---------------------------------------------------------------------
+// Scenario 14: BABYBEHAVE_STYLE's value-mapping (detail::
+// ParseNarrationStyleEnv - see bdd.hpp) plus the Arrow/Tree renderers
+// themselves - like RunNarrationDisabledScenario above, every OTHER
+// scenario in this file runs under the default Plain style, so
+// ArrowKindWord()/TreeKindLabel()'s switches and RenderArrow()/
+// RenderTree() are otherwise dead code in this BBH-side measurement.
+//
+// Runs Execute() under both Arrow and Tree (all six step kinds, plus a
+// second Tree run with And/Or/But but no Then, to reach RenderTree()'s
+// "orphaned assertions" fallback branch) to exercise NarrateStep()'s
+// buffering branch and Execute()'s end-of-run render dispatch - their
+// narration output isn't captured (see below for why), so it just prints
+// to the real terminal like every other scenario's narration in this
+// file. Correctness of the rendered text itself is checked separately, by
+// calling detail::RenderArrow()/RenderTree() directly against hand-built
+// step lists: unlike gtest's CaptureStdout() (which redirects the actual
+// OS file descriptor), this file's std::cout.rdbuf()-swap capture trick
+// (see RunNarrationDisabledScenario) can't observe PrintLine()'s output
+// when __cpp_lib_print is available, since std::println() writes to
+// stdout directly rather than through std::cout's stream buffer.
+// ---------------------------------------------------------------------
+
+bool RunNarrationStyleScenario() {
+    bool asExpected = detail::ParseNarrationStyleEnv(nullptr) == NarrationStyle::Plain &&
+                       detail::ParseNarrationStyleEnv("arrow") == NarrationStyle::Arrow &&
+                       detail::ParseNarrationStyleEnv("tree") == NarrationStyle::Tree &&
+                       detail::ParseNarrationStyleEnv("bogus") == NarrationStyle::Plain;
+
+    SetNarrationStyle(NarrationStyle::Arrow);
+    {
+        auto test = GivenA(SetupTrivialContext);
+        test.With(StepPreconditionTrue)
+            .When(StepActionTrue)
+            .Then(StepAndTrue)
+            .And(StepAndTrue)
+            .Or(StepOrTrue)
+            .But(StepButTrue);
+    }
+
+    SetNarrationStyle(NarrationStyle::Tree);
+    {
+        auto test = GivenA(SetupTrivialContext);
+        test.With(StepPreconditionTrue)
+            .When(StepActionTrue)
+            .Then(StepAndTrue)
+            .And(StepAndTrue)
+            .Or(StepOrTrue)
+            .But(StepButTrue);
+    }
+    {
+        auto test = GivenA(SetupTrivialContext);
+        test.SetCollectFailuresMode(true);
+        test.With(StepPreconditionTrue)
+            .And(StepAndTrue)
+            .Or([](TestContext&) { return false; })
+            .But(StepButTrue);
+    }
+    SetNarrationStyle(NarrationStyle::Plain);
+
+    const std::vector<detail::NarrationStepEntry> allKinds{
+        { detail::StepKindTag::With, "TheWith" }, { detail::StepKindTag::When, "TheWhen" },
+        { detail::StepKindTag::Then, "TheThen" }, { detail::StepKindTag::And, "TheAnd" },
+        { detail::StepKindTag::Or, "TheOr" },      { detail::StepKindTag::But, "TheBut" },
+    };
+    const std::string arrowRendered = detail::RenderArrow("AScenario", allKinds, true);
+    const std::string treeRendered = detail::RenderTree("AScenario", allKinds, false);
+    const std::vector<detail::NarrationStepEntry> orphanedAssertions{
+        { detail::StepKindTag::And, "TheAnd" },
+    };
+    const std::string treeOrphanedRendered = detail::RenderTree("AScenario", orphanedAssertions, true);
+
+    asExpected = asExpected && arrowRendered.find("[ OK ] AScenario") != std::string::npos &&
+                 arrowRendered.find("-> Given a: AScenario") != std::string::npos &&
+                 arrowRendered.find("+ With: TheWith") != std::string::npos &&
+                 arrowRendered.find("-> When: TheWhen") != std::string::npos &&
+                 arrowRendered.find("-> Then: TheThen") != std::string::npos &&
+                 arrowRendered.find("+ And: TheAnd") != std::string::npos &&
+                 arrowRendered.find("+ Or: TheOr") != std::string::npos &&
+                 arrowRendered.find("+ But: TheBut") != std::string::npos &&
+                 treeRendered.find("FAIL") != std::string::npos &&
+                 treeRendered.find("GIVEN") != std::string::npos && treeRendered.find("WITH") != std::string::npos &&
+                 treeRendered.find("WHEN") != std::string::npos && treeRendered.find("THEN") != std::string::npos &&
+                 treeRendered.find("AND") != std::string::npos && treeRendered.find("OR") != std::string::npos &&
+                 treeRendered.find("BUT") != std::string::npos &&
+                 treeOrphanedRendered.find("AND") != std::string::npos &&
+                 treeOrphanedRendered.find("THEN") == std::string::npos;
+    if (!asExpected) {
+        std::cerr << "  NarrationStyle: ParseNarrationStyleEnv mapping or Arrow/Tree renderer output unexpected\n";
+    }
+    return asExpected;
+}
+
 } // namespace
 
 int main() {
@@ -593,6 +726,10 @@ int main() {
                     RunSoftCheckCollectFailuresScenario(), passCount, totalCount);
     ReportScenario("SoftCheckDefaultCallback: named sub-checks surface in the default failure callback",
                     RunSoftCheckDefaultCallbackScenario(), passCount, totalCount);
+    ReportScenario("NarrationDisabled: SetNarrationEnabled(false) silences stdout/stderr output",
+                    RunNarrationDisabledScenario(), passCount, totalCount);
+    ReportScenario("NarrationStyle: ParseNarrationStyleEnv mapping and Arrow/Tree renderer output",
+                    RunNarrationStyleScenario(), passCount, totalCount);
 
     std::cout << '\n' << passCount << "/" << totalCount << " scenarios behaved as expected\n";
 

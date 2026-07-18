@@ -158,15 +158,19 @@ if(BABYBEHAVE_ENABLE_COVERAGE)
 		set(_bbt6_obj "${_bbt6_objdir}/test_BabyBehaveTest_NoSourceLocation.cpp.o")
 		set(_bbt6_gcda "${_bbt6_objdir}/test_BabyBehaveTest_NoSourceLocation.cpp.gcda")
 
+		# BABYBEHAVE_QUIET=1: these are the gtest-based UT binaries (see
+		# tests/CMakeLists.txt's set_tests_properties() for the ctest-side
+		# equivalent) - their step narration otherwise interleaves with
+		# gtest's own "[ RUN ]"/"[ OK ]" output.
 		add_custom_target(coverage-ut
 			COMMAND ${CMAKE_COMMAND} -E rm -f "${_tc_gcda}" "${_bbt_gcda}" "${_bbt2_gcda}" "${_bbt3_gcda}" "${_bbt4_gcda}" "${_bbt5_gcda}" "${_bbt6_gcda}"
-			COMMAND sh -c "$<TARGET_FILE:test_TestContext> || true"
-			COMMAND sh -c "$<TARGET_FILE:test_BabyBehaveTest> || true"
-			COMMAND sh -c "$<TARGET_FILE:test_BabyBehaveTest_StepTypes> || true"
-			COMMAND sh -c "$<TARGET_FILE:test_BabyBehaveTest_Exceptions> || true"
-			COMMAND sh -c "$<TARGET_FILE:test_BabyBehaveTest_SoftCheckAndCollectFailures> || true"
-			COMMAND sh -c "$<TARGET_FILE:test_BabyBehaveTest_CallbacksAndDeathTests> || true"
-			COMMAND sh -c "$<TARGET_FILE:test_BabyBehaveTest_NoSourceLocation> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_TestContext> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_StepTypes> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_Exceptions> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_SoftCheckAndCollectFailures> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_CallbacksAndDeathTests> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_NoSourceLocation> || true"
 			COMMAND ${CMAKE_COMMAND}
 				-DCOV_LABEL=UT
 				-DCOV_OUTFILE=${CMAKE_BINARY_DIR}/coverage-ut.txt
