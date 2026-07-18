@@ -1,0 +1,65 @@
+---
+# Curated check set for BabyBehave's headers (include/BabyBehave/*.hpp) -
+# deliberately not clang-tidy's defaults. The enabled groups below are the
+# ones with real correctness/perf/readability payoff for a small header-only
+# library. Every disable is a deliberate call made against this specific
+# codebase, not an omission - see the reason next to each:
+#
+#   modernize-use-trailing-return-type
+#     100% of existing functions already use conventional return-type-first
+#     style; enforcing this would rewrite every signature in the project for
+#     a purely cosmetic preference with no correctness/perf benefit.
+#   readability-use-concise-preprocessor-directives
+#     Every feature-test guard in bdd.hpp deliberately uses `#if
+#     defined(X)` (never `#ifdef`), which composes with `&&`/`||` if a guard
+#     ever needs to test more than one macro; converting only the
+#     single-macro ones to `#ifdef` would make the file inconsistent.
+#   readability-container-contains
+#     `.contains()` on string/string_view is a C++23 addition
+#     (__cpp_lib_string_contains); using it unconditionally would break the
+#     project's documented C++17 fallback story, and feature-gating it just
+#     for this cosmetic sugar over `.find() != npos` isn't worth the
+#     complexity.
+#   bugprone-easily-swappable-parameters
+#     Fires throughout detail::VerifyCondition()/SafeInvokeExceptionCallback
+#     and friends purely because the internal API deliberately takes
+#     several adjacent std::string_view parameters; not actionable without
+#     a broader (and unwarranted) API redesign.
+#   cppcoreguidelines-avoid-const-or-ref-data-members
+#     SoftCheck::m_context is a TestContext& by design: SoftCheck is a
+#     short-lived, non-owning helper constructed fresh inside a step body
+#     and never stored, copied, or moved - exactly the case this guideline
+#     doesn't apply to.
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#     Flags BabyBehaveTest::Execute()'s m_steps[i]/m_stepLocations[i], both
+#     indexed by a loop already bounded by m_steps.size(); switching to
+#     .at() would add exception-based bounds checking to a hot,
+#     already-verified-safe path for no real safety gain.
+#
+# See CI's clang-tidy job for how this is invoked.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  cppcoreguidelines-*,
+  clang-analyzer-*,
+  -modernize-use-trailing-return-type,
+  -readability-use-concise-preprocessor-directives,
+  -readability-container-contains,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+
+WarningsAsErrors: '*'
+
+CheckOptions:
+  # ok/it/sv/c/e/os are established idioms throughout these headers (a
+  # boolean check result, a container iterator, a string_view alias, a
+  # single-char loop variable, a caught std::exception&, an ostream&) -
+  # flagging every one of them is noise, not a real length concern.
+  - key: readability-identifier-length.IgnoredVariableNames
+    value: '^(ok|it|sv|c)$'
+  - key: readability-identifier-length.IgnoredParameterNames
+    value: '^(e|os|sv)$'

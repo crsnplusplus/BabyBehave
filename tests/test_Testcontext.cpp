@@ -175,6 +175,60 @@ TEST(TestContext, testSetGetCustomClass) {
     ASSERT_EQ(value.b, retrievedValue.b);
 }
 
+TEST(TestContext, testTypedContextKeyRoundTrips) {
+    BabyBehave::BDD::TestContext context;
+
+    static constexpr BabyBehave::BDD::TestContext::ContextKey<int> kIntKey{"typedIntKey"};
+    static constexpr BabyBehave::BDD::TestContext::ContextKey<std::string> kStringKey{"typedStringKey"};
+
+    context.Set(kIntKey, 42);
+    context.Set(kStringKey, std::string("hello"));
+
+    int retrievedInt = context.Get(kIntKey);
+    std::string retrievedString = context.Get(kStringKey);
+
+    ASSERT_EQ(42, retrievedInt);
+    ASSERT_EQ("hello", retrievedString);
+
+    // A ContextKey<T> only accepts values/reads of type T at compile time, so a typo'd
+    // key name or a wrong-type Get/Set call site is caught by the compiler rather than
+    // throwing std::bad_any_cast or std::out_of_range at runtime. The following would
+    // fail to compile because kIntKey is a ContextKey<int>:
+    //   std::string wrongType = context.Get(kIntKey);       // no viable conversion
+    //   context.Set(kIntKey, std::string("not an int"));    // no matching Set overload
+
+    // The typed-key API is purely additive: the underlying storage is still the same
+    // string-keyed map used by the plain Set<T>/Get<T> overloads, so an existing
+    // string-based call site can read back a value written through its typed key.
+    int retrievedViaStringKey = context.Get<int>("typedIntKey");
+    ASSERT_EQ(42, retrievedViaStringKey);
+}
+
+// testNonExistentKey/testGetNonExistentKeyCorrectType above already drive
+// the not-found throw path (bdd.hpp's TestContext::Get<T>) for T=int; each
+// of the other T's used elsewhere in this file is a distinct template
+// instantiation with its own copy of that throw path, so it needs its own
+// missing-key call to be exercised for coverage purposes.
+TEST(TestContext, testGetNonExistentKeyStringType) {
+    BabyBehave::BDD::TestContext context;
+    ASSERT_THROW((void)context.Get<std::string>("missingStringKey"), std::out_of_range);
+}
+
+TEST(TestContext, testGetNonExistentKeyVectorType) {
+    BabyBehave::BDD::TestContext context;
+    ASSERT_THROW((void)(context.Get<std::vector<int>>("missingVectorKey")), std::out_of_range);
+}
+
+TEST(TestContext, testGetNonExistentKeyMapType) {
+    BabyBehave::BDD::TestContext context;
+    ASSERT_THROW((void)(context.Get<std::map<std::string, int>>("missingMapKey")), std::out_of_range);
+}
+
+TEST(TestContext, testGetNonExistentKeyCustomClassType) {
+    BabyBehave::BDD::TestContext context;
+    ASSERT_THROW((void)context.Get<MyClass>("missingCustomClassKey"), std::out_of_range);
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

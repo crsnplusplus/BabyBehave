@@ -1,0 +1,242 @@
+name: CI
+
+# Manual only, by design: every run bumps the build-counter badge and can
+# push a badge-update commit to main (see the "coverage" job below), so
+# this is deliberately workflow_dispatch-only rather than push/pull_request
+# - an automatic trigger on every push would mean CI-triggered commits
+# triggering CI again, and would burn a build-counter increment for every
+# push instead of only the runs someone actually asked for.
+on:
+  workflow_dispatch:
+
+env:
+  # BabyBehave targets C++23, but include/BabyBehave/bdd.hpp guards every
+  # C++23-only stdlib feature it uses (std::move_only_function, std::print)
+  # behind __cpp_lib_* feature-test macros and falls back to std::function /
+  # std::cout when they're unavailable. That means this workflow does not
+  # need to chase a compiler with full C++23 stdlib coverage: whichever
+  # toolchain ubuntu-latest ships (GCC and Clang, both recent enough to
+  # accept -std=c++23 at the language level) is enough to build and pass,
+  # by design.
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
+jobs:
+  build-and-test:
+    name: build-and-test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-gcc
+            os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+          - name: ubuntu-clang
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+          - name: macos-clang
+            # AppleClang only - macOS runners don't ship a real GCC (the
+            # system `gcc` is a clang alias), and installing one via
+            # Homebrew just to test a second compiler on this OS isn't
+            # worth the added job time.
+            os: macos-latest
+            cc: clang
+            cxx: clang++
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show compiler version
+        run: ${{ matrix.cxx }} --version
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  build-and-test-windows:
+    name: build-and-test (windows-msvc)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        # No CC/CXX override and no -DCMAKE_BUILD_TYPE here: the default
+        # generator on windows-latest is a multi-config Visual Studio
+        # generator (MSVC is auto-detected), which picks its build type via
+        # --config at build/test time instead of CMAKE_BUILD_TYPE.
+        run: cmake -B build
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -C Release
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy
+
+      - name: Configure (compile_commands.json, clang)
+        run: cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Run clang-tidy on BabyBehave's headers
+        # .clang-tidy at the repo root (picked up automatically) sets
+        # WarningsAsErrors: '*', so any finding fails this step; only the
+        # three shipped headers are linted, not tests/examples/vendored
+        # googletest.
+        run: >
+          clang-tidy -p build
+          include/BabyBehave/bdd.hpp
+          include/BabyBehave/matchers.hpp
+          include/BabyBehave/reporters.hpp
+
+  coverage:
+    name: coverage (gcov)
+    runs-on: ubuntu-latest
+    permissions:
+      # Only this job needs it, and only to commit the coverage badge data
+      # file back to main (see the two steps at the end of this job) -
+      # every other job/step stays at the repo's default read-only token.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: bdd.hpp coverage from the gtest unit test suite (coverage-ut)
+        run: cmake --build build --target coverage-ut
+
+      - name: bdd.hpp coverage from the self-hosted BabyBehave example (coverage-bbh)
+        run: cmake --build build --target coverage-bbh
+
+      - name: Upload coverage reports
+        # Uploaded even if the gate step below fails, so a coverage
+        # regression's full gcov output is still available to inspect.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            build/coverage-ut.txt
+            build/coverage-bbh.txt
+          if-no-files-found: error
+
+      - name: Enforce bdd.hpp coverage >= 90% (UT and BBH)
+        run: cmake --build build --target coverage-gate
+
+      - name: Compute coverage badge data
+        # Runs regardless of the gate result above (a red badge on a real
+        # regression is more useful than no badge at all), but only on
+        # runs of main triggered by hand - this workflow is
+        # workflow_dispatch-only (see the top-level `on:` block), so
+        # event_name is always workflow_dispatch, but the check stays as
+        # documentation and a guard against a future trigger being added
+        # without updating this. Badge shows the min(UT, BBH) combined
+        # percentage, since that's the number the gate above actually
+        # enforces. always() makes this run even after the gate step fails,
+        # but an earlier, more fundamental failure (build/test/coverage-ut/
+        # coverage-bbh itself) means these report files never got produced
+        # at all - the explicit existence check below skips cleanly rather
+        # than writing a garbage badge in that case.
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+        run: |
+          if [ ! -f build/coverage-ut.txt ] || [ ! -f build/coverage-bbh.txt ]; then
+            echo "coverage-ut.txt/coverage-bbh.txt missing (an earlier step failed before producing them); skipping badge update."
+            exit 0
+          fi
+          UT_PCT=$(grep -A2 "combined (true per-line union" build/coverage-ut.txt | grep -oP 'Lines executed:\K[0-9]+\.[0-9]+')
+          BBH_PCT=$(grep -A2 "combined (true per-line union" build/coverage-bbh.txt | grep -oP 'Lines executed:\K[0-9]+\.[0-9]+')
+          if [ -z "$UT_PCT" ] || [ -z "$BBH_PCT" ]; then
+            echo "Could not parse a combined percentage from the coverage reports; skipping badge update."
+            exit 0
+          fi
+          MIN_PCT=$(awk -v a="$UT_PCT" -v b="$BBH_PCT" 'BEGIN { print (a < b) ? a : b }')
+          COLOR=$(awk -v p="$MIN_PCT" 'BEGIN { if (p >= 90) print "brightgreen"; else if (p >= 75) print "yellow"; else print "red" }')
+          mkdir -p .github/badges
+          printf '{"schemaVersion":1,"label":"bdd.hpp coverage","message":"%s%%","color":"%s"}\n' "$MIN_PCT" "$COLOR" > .github/badges/coverage.json
+          echo "UT=${UT_PCT}% BBH=${BBH_PCT}% -> badge min=${MIN_PCT}% (${COLOR})"
+
+      - name: Bump build counter badge
+        # Every manually-triggered run of this workflow increments this,
+        # regardless of whether it passed - it's a "CI has been run N
+        # times" counter, not a quality signal (that's what the coverage
+        # and per-job pass/fail badges are for). Same always()/main-only
+        # guard as the coverage badge step above, and the same missing-file
+        # tolerance (first-ever run has no build.json yet, so PREV falls
+        # back to 0).
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p .github/badges
+          PREV=$(grep -oP '"message"\s*:\s*"\K[0-9]+' .github/badges/build.json 2>/dev/null || echo 0)
+          NEXT=$((PREV + 1))
+          printf '{"schemaVersion":1,"label":"build","message":"%s","color":"blue"}\n' "$NEXT" > .github/badges/build.json
+          echo "build counter: ${PREV} -> ${NEXT}"
+
+      - name: Commit badge data
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/badges/coverage.json .github/badges/build.json
+          git diff --staged --quiet && echo "Badges unchanged, nothing to commit." && exit 0
+          git commit -m "Update coverage/build badges [skip ci]"
+          git push
+
+  sanitizers:
+    name: sanitizers (ASan+UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run example binaries under sanitizers
+        # The example binaries aren't ctest-registered, so run them directly
+        # to catch ASan/UBSan regressions they'd otherwise hide. example_Failing
+        # is a deliberate "this scenario fails" demo (it intentionally exits
+        # non-zero); every other example is expected to exit cleanly.
+        run: |
+          set -e
+          for exe in build/examples/example_*; do
+            [ -x "$exe" ] || continue
+            name=$(basename "$exe")
+            echo "--- running $name ---"
+            if [ "$name" = "example_Failing" ]; then
+              "$exe" || true
+            else
+              "$exe"
+            fi
+          done

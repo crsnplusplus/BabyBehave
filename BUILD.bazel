@@ -1,0 +1,6 @@
+cc_library(
+    name = "babybehave",
+    hdrs = glob(["include/BabyBehave/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)

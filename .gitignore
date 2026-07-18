@@ -32,6 +32,7 @@
 *.app
 
 build/*
+build-cov/*
 
 # direnv local environment (project-specific gh account config path)
 .envrc
