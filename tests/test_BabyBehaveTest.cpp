@@ -33,9 +33,16 @@ TEST(BabyBehaveTest, ExecuteWithMultipleSteps) {
 // "actually write" branch. This test exercises the opposite: flips
 // SetNarrationEnabled(true) to hit that branch, verifies real output
 // appears, then flips back to false (matching this binary's default)
-// so it doesn't leak narration into whatever test gtest runs next.
+// so it doesn't leak narration into whatever test gtest runs next. Also
+// pins NarrationStyle::Plain explicitly (rather than relying on it being
+// the ambient default): this test's assertions check for Plain's literal
+// "Given a:" text, which only NarrationStyleFlag()'s in-process default
+// guarantees - a caller with BABYBEHAVE_STYLE=arrow/tree set in their own
+// shell before invoking ctest would otherwise make this test spuriously
+// fail, since Arrow/Tree never print that substring at all.
 TEST(BabyBehaveTest, NarrationEnabledTrue_ProducesStdoutAndStderrOutput) {
     BabyBehave::BDD::SetNarrationEnabled(true);
+    BabyBehave::BDD::SetNarrationStyle(BabyBehave::BDD::NarrationStyle::Plain);
     testing::internal::CaptureStdout();
     testing::internal::CaptureStderr();
 
