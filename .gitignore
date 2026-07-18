@@ -32,3 +32,11 @@
 *.app
 
 build/*
+
+# direnv local environment (project-specific gh account config path)
+.envrc
+
+# AI assistant local config/instructions
+.claude/
+CLAUDE.md
+AGENTS.md

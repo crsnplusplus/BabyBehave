@@ -1,6 +1,8 @@
 #ifndef BABYBEHAVE_BDD_HPP
 #define BABYBEHAVE_BDD_HPP
 
+#pragma once
+
 #include <functional>
 #include <vector>
 #include <variant>
@@ -9,11 +11,34 @@
 #include <any>
 #include <string>
 #include <stdexcept>
-#include <concepts>
+#include <type_traits>
 #include <iostream>
+#include <cstdlib>
+#include <version>
+#if defined(__cpp_lib_print)
+#include <print>
+#endif
 
 
 namespace BabyBehave::BDD {
+
+    namespace detail {
+        inline void PrintLine(const std::string& text) {
+#if defined(__cpp_lib_print)
+            std::println("{}", text);
+#else
+            std::cout << text << '\n';
+#endif
+        }
+
+        inline void PrintLine() {
+#if defined(__cpp_lib_print)
+            std::println();
+#else
+            std::cout << '\n';
+#endif
+        }
+    } // namespace detail
 
     class TestContext {
     private:
@@ -22,14 +47,14 @@ namespace BabyBehave::BDD {
     public:
         template<typename T>
         void Set(const std::string& key, T obj) {
-            m_objects[key] = obj;
+            m_objects[key] = std::move(obj);
         }
 
         template<typename T>
-        T Get(const std::string& key) {
+        [[nodiscard]] T Get(const std::string& key) const {
             auto it = m_objects.find(key);
             if (it == m_objects.end()) {
-                auto errorMsg = "Key not found: " + key;
+                const auto errorMsg = "Key not found: " + key;
                 std::cerr << errorMsg << std::endl;
                 throw std::out_of_range(errorMsg);
             }
@@ -37,7 +62,13 @@ namespace BabyBehave::BDD {
         }
     };
 
+#if defined(__cpp_lib_move_only_function)
+    using StepFunction = std::move_only_function<bool(TestContext&)>;
+    using ContextSetupFunction = std::move_only_function<void(TestContext&)>;
+#else
     using StepFunction = std::function<bool(TestContext&)>;
+    using ContextSetupFunction = std::function<void(TestContext&)>;
+#endif
 
     struct Precondition { StepFunction fn; };
     struct Action { StepFunction fn; };
@@ -46,34 +77,15 @@ namespace BabyBehave::BDD {
     struct Or { StepFunction fn; };
     struct But { StepFunction fn; };
 
-    template<typename T>
-    concept IsPrecondition = std::same_as<T, Precondition>;
-
-    template<typename T>
-    concept IsAction = std::same_as<T, Action>;
-
-    template<typename T>
-    concept IsPostcondition = std::same_as<T, Postcondition>;
-
-    template<typename T>
-    concept IsAnd = std::same_as<T, And>;
-
-    template<typename T>
-    concept IsOr = std::same_as<T, Or>;
-
-    template<typename T>
-    concept IsBut = std::same_as<T, But>;
-
-
     class BabyBehaveTest {
     public:
         using StepVariant = std::variant<Precondition, Action, Postcondition, And, Or, But>;
         using Step = std::pair<std::string, StepVariant>;
 
 
-        BabyBehaveTest(const std::string& testName, std::function<void(TestContext&)> contextSetupFn)
+        BabyBehaveTest(const std::string& testName, ContextSetupFunction contextSetupFn)
             : m_testName(testName),
-            m_contextSetupFn(contextSetupFn) {
+            m_contextSetupFn(std::move(contextSetupFn)) {
             m_onConditionNotVerifiedCallback = [](const std::string& errorMsg) {
                 std::cerr << errorMsg << std::endl;
                 std::exit(EXIT_FAILURE);
@@ -89,6 +101,9 @@ namespace BabyBehave::BDD {
             Execute();
         }
 
+        BabyBehaveTest(const BabyBehaveTest&) = delete;
+        BabyBehaveTest& operator=(const BabyBehaveTest&) = delete;
+
         void SetOnConditionNotVerifiedCallback(std::function<void(const std::string& errorMsg)> callback) {
             m_onConditionNotVerifiedCallback = callback;
         }
@@ -98,124 +113,141 @@ namespace BabyBehave::BDD {
         }
 
         template<typename StepType>
-        BabyBehaveTest& AddStep(const std::string& name, const StepFunction& stepFunction) {
-            StepVariant step = StepType{ stepFunction };
-            m_steps.push_back({ name, step });
+        BabyBehaveTest& AddStep(const std::string& name, StepFunction stepFunction) {
+            StepVariant step = StepType{ std::move(stepFunction) };
+            m_steps.push_back({ name, std::move(step) });
             return *this;
         }
 
-        std::vector<Step> GetSteps() const {
+        const std::vector<Step>& GetSteps() const {
             return m_steps;
-        } 
+        }
 
     private:
         void Execute() {
-            std::cout << "Given a: " << m_testName << std::endl;
+            detail::PrintLine("Given a: " + m_testName);
             try {
                 m_contextSetupFn(m_context);
             }
             catch (const std::exception& e) {
                 VerifyCondition(false, "Exception caught in Context Setup: " + std::string(e.what()));
             }
+            catch (...) {
+                VerifyCondition(false, "Exception caught in Context Setup: unknown non-std::exception type thrown");
+            }
 
-            for (const auto& step : m_steps) {
+            for (auto& step : m_steps) {
                 std::visit([this, &step](auto&& arg) {
                     executeStep(step.first, arg);
                     }, step.second);
             }
 
-            std::cout << std::endl;
+            detail::PrintLine();
         }
 
         template<typename T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    " << typeid(T).name() << ": " << name << std::endl;
-            try {
-                VerifyCondition(step(m_context), typeid(T).name() + std::string(" failed") );
-            }
-            catch (const std::exception& e) {
-                auto message = std::string("Exception caught in ") + typeid(T).name() + std::string(": ") + std::string(e.what());
-                m_onExceptionCallback(message, e);
+        void executeStep(const std::string& name, T& step) {
+            if constexpr (std::is_same_v<T, Precondition>) {
+                detail::PrintLine("    With: " + name);
+                try {
+                    VerifyCondition(step.fn(m_context), "Precondition failed");
+                }
+                catch (const std::exception& e) {
+                    SafeInvokeExceptionCallback("Precondition", e);
+                }
+                catch (...) {
+                    const std::runtime_error unknownEx("unknown non-std::exception type thrown");
+                    SafeInvokeExceptionCallback("Precondition", unknownEx);
+                }
+            } else if constexpr (std::is_same_v<T, Action>) {
+                detail::PrintLine("    When: " + name);
+                try {
+                    VerifyCondition(step.fn(m_context), "Action failed");
+                }
+                catch (const std::exception& e) {
+                    SafeInvokeExceptionCallback("Action", e);
+                }
+                catch (...) {
+                    const std::runtime_error unknownEx("unknown non-std::exception type thrown");
+                    SafeInvokeExceptionCallback("Action", unknownEx);
+                }
+            } else if constexpr (std::is_same_v<T, Postcondition>) {
+                detail::PrintLine("    Then: " + name);
+                try {
+                    VerifyCondition(step.fn(m_context), "Postcondition failed");
+                }
+                catch (const std::exception& e) {
+                    SafeInvokeExceptionCallback("Postcondition", e);
+                }
+                catch (...) {
+                    const std::runtime_error unknownEx("unknown non-std::exception type thrown");
+                    SafeInvokeExceptionCallback("Postcondition", unknownEx);
+                }
+            } else if constexpr (std::is_same_v<T, And>) {
+                detail::PrintLine("    And: " + name);
+                try {
+                    VerifyCondition(step.fn(m_context), "And condition failed");
+                }
+                catch (const std::exception& e) {
+                    SafeInvokeExceptionCallback("And condition" , e);
+                }
+                catch (...) {
+                    const std::runtime_error unknownEx("unknown non-std::exception type thrown");
+                    SafeInvokeExceptionCallback("And condition", unknownEx);
+                }
+            } else if constexpr (std::is_same_v<T, Or>) {
+                detail::PrintLine("    Or: " + name);
+                try {
+                    VerifyCondition(step.fn(m_context), "Or condition failed");
+                }
+                catch (const std::exception& e) {
+                    SafeInvokeExceptionCallback("Or condition", e);
+                }
+                catch (...) {
+                    const std::runtime_error unknownEx("unknown non-std::exception type thrown");
+                    SafeInvokeExceptionCallback("Or condition", unknownEx);
+                }
+            } else if constexpr (std::is_same_v<T, But>) {
+                detail::PrintLine("    But: " + name);
+                try {
+                    VerifyCondition(step.fn(m_context), "But condition failed");
+                }
+                catch (const std::exception& e) {
+                    SafeInvokeExceptionCallback("But condition", e);
+                }
+                catch (...) {
+                    const std::runtime_error unknownEx("unknown non-std::exception type thrown");
+                    SafeInvokeExceptionCallback("But condition", unknownEx);
+                }
+            } else {
+                static_assert(!sizeof(T), "Unknown step type");
             }
         }
 
 
-        template<IsPrecondition T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    With: " << name << std::endl;
-            try {
-                VerifyCondition(step.fn(m_context), "Precondition failed");
-            }
-            catch (const std::exception& e) {
-                m_onExceptionCallback("Precondition", e);
-            }
-        }
-
-        template<IsAction T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    When: " << name << std::endl;
-            try {
-                VerifyCondition(step.fn(m_context), "Action failed");
-            }
-            catch (const std::exception& e) {
-                m_onExceptionCallback("Action", e);
-            }
-        }
-
-        template<IsPostcondition T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    Then: " << name << std::endl;
-            try {
-                VerifyCondition(step.fn(m_context), "Precondition failed");
-            }
-            catch (const std::exception& e) {
-                m_onExceptionCallback("Precondition", e);
-            }
-        }
-
-        template<IsAnd T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    And: " << name << std::endl;
-            try {
-                VerifyCondition(step.fn(m_context), "And condition failed");
-            }
-            catch (const std::exception& e) {
-                m_onExceptionCallback("And condition" , e);
-            }
-        }
-
-        template<IsOr T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    Or: " << name << std::endl;
-            try {
-                VerifyCondition(step.fn(m_context), "Or condition failed");
-            }
-            catch (const std::exception& e) {
-                m_onExceptionCallback("Or condition", e);
-            }
-        }
-
-        template<IsBut T>
-        void executeStep(const std::string& name, const T& step) {
-            std::cout << "    But: " << name << std::endl;
-            try {
-                VerifyCondition(step.fn(m_context), "But condition failed");
-            }
-            catch (const std::exception& e) {
-                m_onExceptionCallback("But condition", e);
-            }
-        }
-
-
-        void VerifyCondition(bool condition, const std::string& errorMsg) {
+        void VerifyCondition(bool condition, const std::string& errorMsg) const {
             if (!condition) {
-                m_onConditionNotVerifiedCallback(errorMsg);
+                try {
+                    m_onConditionNotVerifiedCallback(errorMsg);
+                }
+                catch (...) {
+                    std::cerr << "BabyBehave: onConditionNotVerified callback itself threw an exception; ignoring to avoid std::terminate()" << std::endl;
+                }
+            }
+        }
+
+        void SafeInvokeExceptionCallback(const std::string& step, const std::exception& e) const {
+            try {
+                m_onExceptionCallback(step, e);
+            }
+            catch (...) {
+                std::cerr << "BabyBehave: onException callback itself threw an exception; ignoring to avoid std::terminate()" << std::endl;
             }
         }
 
     private:
         std::string m_testName;
-        std::function<void(TestContext&)> m_contextSetupFn;
+        ContextSetupFunction m_contextSetupFn;
         TestContext m_context;
         std::vector<Step> m_steps;
 
@@ -225,8 +257,8 @@ namespace BabyBehave::BDD {
 
 
     inline BabyBehaveTest GivenAImpl(const std::string& testName,
-        std::function<void(TestContext&)> contextSetup) {
-        return BabyBehaveTest(testName, contextSetup);
+        ContextSetupFunction contextSetup) {
+        return BabyBehaveTest(testName, std::move(contextSetup));
     }
 
 #define Given(func)  GivenAImpl(#func, {func})

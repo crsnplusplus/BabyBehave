@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(BabyBehaveTests)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 enable_testing()
 
@@ -16,10 +16,10 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(test_TestContext test_Testcontext.cpp)
 target_include_directories(test_TestContext PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
-target_link_libraries(test_TestContext gtest_main)
+target_link_libraries(test_TestContext gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
 add_test(TestContext test_TestContext)
 
 add_executable(test_BabyBehaveTest test_BabyBehaveTest.cpp)
 target_include_directories(test_BabyBehaveTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
-target_link_libraries(test_BabyBehaveTest gtest_main)
+target_link_libraries(test_BabyBehaveTest gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
 add_test(BabyBehaveTest test_BabyBehaveTest)

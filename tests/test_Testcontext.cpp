@@ -65,7 +65,7 @@ TEST(TestContext, testNonExistentKey) {
     std::string key = "nonExistentKey";
     
     try {
-        context.Get<int>(key);
+        (void)context.Get<int>(key);
     } catch (const std::exception& e) {
         ASSERT_STREQ("Key not found: nonExistentKey", e.what());
         return;
@@ -108,14 +108,14 @@ TEST(TestContext, testGetWrongType) {
 
     context.Set(key, value);
 
-    ASSERT_THROW(context.Get<std::string>(key), std::bad_any_cast);
+    ASSERT_THROW((void)context.Get<std::string>(key), std::bad_any_cast);
 }
 
 TEST(TestContext, testGetNonExistentKeyCorrectType) {
     BabyBehave::BDD::TestContext context;
     std::string key = "nonExistentKey";
 
-    ASSERT_THROW(context.Get<int>(key), std::out_of_range);
+    ASSERT_THROW((void)context.Get<int>(key), std::out_of_range);
 }
 
 TEST(TestContext, testSetGetComplexType) {
