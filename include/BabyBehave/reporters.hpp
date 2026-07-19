@@ -71,14 +71,14 @@ namespace BabyBehave::BDD::Reporters {
         inline std::string EscapeXml(const std::string& text) {
             std::string escaped;
             escaped.reserve(text.size());
-            for (const char c : text) {
-                switch (c) {
+            for (const char chr : text) {
+                switch (chr) {
                     case '&':  escaped += "&amp;";  break;
                     case '<':  escaped += "&lt;";   break;
                     case '>':  escaped += "&gt;";   break;
                     case '"':  escaped += "&quot;"; break;
                     case '\'': escaped += "&apos;"; break;
-                    default:   escaped += c;        break;
+                    default:   escaped += chr;      break;
                 }
             }
             return escaped;

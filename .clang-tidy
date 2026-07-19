@@ -35,6 +35,16 @@
 #     indexed by a loop already bounded by m_steps.size(); switching to
 #     .at() would add exception-based bounds checking to a hot,
 #     already-verified-safe path for no real safety gain.
+#   cppcoreguidelines-macro-usage
+#     Given/GivenA/With/WithI/When/WhenI/Then/ThenI/And/AndI/But/ButI/Or/OrI
+#     are BabyBehave's entire public DSL, and every one of them has to stay
+#     a function-like macro: each expands to `#func`, stringifying the
+#     caller's raw step expression (a named function's identifier, or an
+#     inline lambda's whole source text) for narration - see bdd.hpp's
+#     GivenA/With/etc. definitions. A constexpr template function can only
+#     ever see the step's *value*, never the source text that produced it,
+#     so this isn't a case of an avoidable macro; it's the one thing a
+#     macro can do that a function can't.
 #
 # See CI's clang-tidy job for how this is invoked.
 Checks: >
@@ -50,16 +60,17 @@ Checks: >
   -readability-container-contains,
   -bugprone-easily-swappable-parameters,
   -cppcoreguidelines-avoid-const-or-ref-data-members,
-  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -cppcoreguidelines-macro-usage
 
 WarningsAsErrors: '*'
 
 CheckOptions:
-  # ok/it/sv/c/e/os are established idioms throughout these headers (a
+  # ok/it/sv/e/os are established idioms throughout these headers (a
   # boolean check result, a container iterator, a string_view alias, a
-  # single-char loop variable, a caught std::exception&, an ostream&) -
-  # flagging every one of them is noise, not a real length concern.
+  # caught std::exception&, an ostream&) - flagging every one of them is
+  # noise, not a real length concern.
   - key: readability-identifier-length.IgnoredVariableNames
-    value: '^(ok|it|sv|c)$'
+    value: '^(ok|it|sv)$'
   - key: readability-identifier-length.IgnoredParameterNames
     value: '^(e|os|sv)$'
