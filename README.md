@@ -130,7 +130,7 @@ test.SetOnExceptionCallback([](const std::string& step, const std::exception& e)
 });
 ```
 
-Exceptions are contained at every boundary: a throw from context setup, from any step, or even from your own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` is caught and never allowed to propagate out of `BabyBehaveTest`'s destructor (which is where scenario execution actually happens). Non-`std::exception` throws (e.g. `throw 42;`) are caught too and reported with a generic message instead of crashing the process. [`examples/SelfTest.cpp`](examples/SelfTest.cpp) exercises every one of these paths directly — see [Self-hosted dogfood example](#self-hosted-dogfood-example) below.
+Exceptions are contained at every boundary: a throw from context setup, from any step, or even from your own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` is caught and never allowed to propagate out of `BabyBehaveTest`'s destructor (which is where scenario execution actually happens). Non-`std::exception` throws (e.g. `throw 42;`) are caught too and reported with a generic message instead of crashing the process. [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp) exercises every one of these paths directly — see [Self-hosted dogfood example](#self-hosted-dogfood-example) below.
 
 ### Call-site diagnostics
 
@@ -143,9 +143,9 @@ On toolchains without `<source_location>`, `location` is always the empty string
 
 ### Self-hosted dogfood example
 
-[`examples/SelfTest.cpp`](examples/SelfTest.cpp) is BabyBehave testing BabyBehave, using its own `Given`/`With`/`When`/`Then` API to drive scenarios and check that the library behaves the way its contract promises (happy path, failed preconditions/actions, thrown `std::exception`s, thrown non-`std::exception` values, context-setup exceptions, `TestContext` round-tripping, collect-failures mode, and `SoftCheck`).
+[`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp) is BabyBehave testing BabyBehave, using its own `Given`/`With`/`When`/`Then` API to drive scenarios and check that the library behaves the way its contract promises (happy path, failed preconditions/actions, thrown `std::exception`s, thrown non-`std::exception` values, context-setup exceptions, `TestContext` round-tripping, collect-failures mode, and `SoftCheck`).
 
-Because the default failure callbacks call `std::exit()`, and `BabyBehaveTest::Execute()` runs from the destructor, `SelfTest.cpp` installs its own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` on every scenario to *record* the outcome instead of exiting, then inspects what was recorded once each scenario's `BabyBehaveTest` goes out of scope. This is the same pattern you'd use to embed BabyBehave scenarios inside your own test harness (gtest, Catch2, a CI script, …) instead of letting a failure kill the whole process.
+Because the default failure callbacks call `std::exit()`, and `BabyBehaveTest::Execute()` runs from the destructor, `test_SelfTest.cpp` installs its own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` on every scenario to *record* the outcome instead of exiting, then inspects what was recorded once each scenario's `BabyBehaveTest` goes out of scope. This is the same pattern you'd use to embed BabyBehave scenarios inside your own test harness (gtest, Catch2, a CI script, …) instead of letting a failure kill the whole process.
 
 ## Collecting results instead of exiting
 
@@ -182,7 +182,7 @@ const TestResult& result = test.Execute();
 // order, including the ones that passed (test's destructor is now a no-op).
 ```
 
-(adapted from `RunCollectFailuresModeScenario` in [`examples/SelfTest.cpp`](examples/SelfTest.cpp); `GetResult()` returns the same `TestResult` without re-running anything, for inspecting it again later.)
+(adapted from `RunCollectFailuresModeScenario` in [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp); `GetResult()` returns the same `TestResult` without re-running anything, for inspecting it again later.)
 
 Off by default, so a consumer who never calls `SetCollectFailuresMode(true)` sees byte-identical behavior to before this feature existed.
 
@@ -201,7 +201,7 @@ bool StepActionWithSoftChecks(TestContext& context) {
 }
 ```
 
-`Check(label, condition, message = "")` records one named sub-check and returns `condition` unchanged (handy for early-return patterns); `AllPassed()` is the AND of every `Check()` call made so far (`true` if `Check()` was never called, so a step that only conditionally checks is unaffected). If the step's overall `bool` comes back `false` **and** at least one sub-check failed, the failure message is extended with the failing sub-checks — for the snippet above, that's `"Action failed: count in range (count was 15)"`. Passing sub-checks are omitted from the message; only the failing ones are useful. This applies both to the default failure-callback path and to `SetCollectFailuresMode(true)`'s `StepResult::message` — see [`examples/SelfTest.cpp`](examples/SelfTest.cpp)'s `RunSoftCheckCollectFailuresScenario`/`RunSoftCheckDefaultCallbackScenario` for both. A step that never constructs a `SoftCheck` is completely unaffected — this is purely additive.
+`Check(label, condition, message = "")` records one named sub-check and returns `condition` unchanged (handy for early-return patterns); `AllPassed()` is the AND of every `Check()` call made so far (`true` if `Check()` was never called, so a step that only conditionally checks is unaffected). If the step's overall `bool` comes back `false` **and** at least one sub-check failed, the failure message is extended with the failing sub-checks — for the snippet above, that's `"Action failed: count in range (count was 15)"`. Passing sub-checks are omitted from the message; only the failing ones are useful. This applies both to the default failure-callback path and to `SetCollectFailuresMode(true)`'s `StepResult::message` — see [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp)'s `RunSoftCheckCollectFailuresScenario`/`RunSoftCheckDefaultCallbackScenario` for both. A step that never constructs a `SoftCheck` is completely unaffected — this is purely additive.
 
 `condition` is a plain, eagerly-evaluated `bool`, so `SoftCheck::Check` composes with raw comparisons or with `BabyBehave::Matchers::Expect(...).ToXxx(...)` (see [Fluent matchers](#fluent-matchers) below) exactly as well as with anything else — `SoftCheck` only adds naming/grouping on top.
 
@@ -247,7 +247,7 @@ std::cout << BabyBehave::BDD::Reporters::ToTap(results) << '\n';
 
 Both also have single-`TestResult` convenience overloads, and both are pure: they format and return a `std::string`, with no file I/O of their own — it's up to the caller to print it or write it wherever CI expects it.
 
-Like `matchers.hpp`, this lives in its own header rather than in `bdd.hpp` (it `#include`s `"bdd.hpp"` itself, since it exists specifically to format `TestResult`/`StepResult`), so consumers who don't want it don't pay for it. It only makes sense for scenarios run under `SetCollectFailuresMode(true)`: in the default mode a failed step invokes the (by default `std::exit`-ing) failure callbacks before `Execute()` ever returns, so there is no complete `TestResult` to serialize in that case. Only feed it `TestResult`s from `SetCollectFailuresMode(true)` scenarios (a scenario that passed entirely still produces a valid, empty-but-meaningful `TestResult`). See [`examples/SelfTest.cpp`](examples/SelfTest.cpp), which accumulates results from its collect-failures-mode scenarios and writes both `selftest-results.xml` and `selftest-results.tap` at the end of `main()`.
+Like `matchers.hpp`, this lives in its own header rather than in `bdd.hpp` (it `#include`s `"bdd.hpp"` itself, since it exists specifically to format `TestResult`/`StepResult`), so consumers who don't want it don't pay for it. It only makes sense for scenarios run under `SetCollectFailuresMode(true)`: in the default mode a failed step invokes the (by default `std::exit`-ing) failure callbacks before `Execute()` ever returns, so there is no complete `TestResult` to serialize in that case. Only feed it `TestResult`s from `SetCollectFailuresMode(true)` scenarios (a scenario that passed entirely still produces a valid, empty-but-meaningful `TestResult`). See [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp), which accumulates results from its collect-failures-mode scenarios and writes both `selftest-results.xml` and `selftest-results.tap` at the end of `main()`.
 
 ## Gherkin support (runtime interpreter, on by default)
 
@@ -505,7 +505,7 @@ cmake --build build --target coverage-ut coverage-bbh
 ```
 
 - **`coverage-ut`** — coverage of `bdd.hpp` as exercised by the gtest unit test suite in [`tests/`](tests/).
-- **`coverage-bbh`** — coverage of `bdd.hpp` as exercised by the self-hosted [`examples/SelfTest.cpp`](examples/SelfTest.cpp) dogfood example.
+- **`coverage-bbh`** — coverage of `bdd.hpp` as exercised by the self-hosted [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp) dogfood tests.
 
 There are two separate targets, not one, because `bdd.hpp` is header-only and template-heavy: every binary that includes it compiles and instruments its own private copy of its inline code, with its own `.gcno`/`.gcda` pair. Keeping the two measurements' object directories separate keeps the reports naturally isolated from each other.
 
