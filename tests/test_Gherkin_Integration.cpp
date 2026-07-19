@@ -675,3 +675,98 @@ Feature: Forced collect-failures
         ::testing::ExitedWithCode(EXIT_FAILURE),
         "AFTER_HOOK_RAN");
 }
+
+// ---------------------------------------------------------------------
+// StepRegistry::Merge() - combining a shared "library" registry with a
+// few extra, test-specific step definitions (see examples/gherkin/
+// Gherkin{Bakery,Library}*.cpp for the real-world reuse pattern this
+// supports: a factory function returns a populated StepRegistry by value,
+// and each test either uses it directly or Merge()s in a handful of
+// extra steps of its own).
+// ---------------------------------------------------------------------
+
+TEST(GherkinRegistryMerge, MergingCombinesStepDefinitionsFromBothRegistries) {
+    StepRegistry shared;
+    shared.RegisterGiven("a warmed-up oven", [](TestContext& ctx) -> bool {
+        ctx.Set("oven_ready", true);
+        return true;
+    });
+
+    StepRegistry extra;
+    extra.RegisterWhen("the dough is placed inside", [](TestContext& ctx) -> bool {
+        ctx.Set("baking", ctx.Get<bool>("oven_ready"));
+        return true;
+    });
+    extra.RegisterThen("the bread should be baking", [](TestContext& ctx) -> bool {
+        return ctx.Get<bool>("baking");
+    });
+
+    shared.Merge(extra);
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Merge combines steps from both registries
+  Scenario: Steps registered on either registry are all reachable after Merge
+    Given a warmed-up oven
+    When the dough is placed inside
+    Then the bread should be baking
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, shared, "merge-combines.feature");
+    EXPECT_TRUE(result.allPassed);
+}
+
+TEST(GherkinRegistryMerge, RegistriesRemainIndependentAfterMerge) {
+    StepRegistry a;
+    a.RegisterGiven("a step known only to a", [](TestContext&) -> bool { return true; });
+
+    StepRegistry b;
+    b.RegisterGiven("a step known only to b", [](TestContext&) -> bool { return true; });
+
+    a.Merge(b);
+
+    // Mutating each registry after the Merge() call must not leak across -
+    // *this and other are fully independent copies from that point on.
+    a.RegisterGiven("added to a after merge", [](TestContext&) -> bool { return true; });
+    b.RegisterGiven("added to b after merge", [](TestContext&) -> bool { return true; });
+
+    EXPECT_TRUE(a.TryMatch(GherkinImpl::StepKeyword::Given, "a step known only to b").has_value());
+    EXPECT_TRUE(a.TryMatch(GherkinImpl::StepKeyword::Given, "a step known only to a").has_value());
+    EXPECT_TRUE(a.TryMatch(GherkinImpl::StepKeyword::Given, "added to a after merge").has_value());
+    // b's post-merge addition must not have reached a.
+    EXPECT_FALSE(a.TryMatch(GherkinImpl::StepKeyword::Given, "added to b after merge").has_value());
+
+    // b never received a's steps (Merge() is one-directional: a.Merge(b)
+    // only copies b's definitions into a, not the reverse).
+    EXPECT_FALSE(b.TryMatch(GherkinImpl::StepKeyword::Given, "a step known only to a").has_value());
+    EXPECT_TRUE(b.TryMatch(GherkinImpl::StepKeyword::Given, "a step known only to b").has_value());
+    EXPECT_TRUE(b.TryMatch(GherkinImpl::StepKeyword::Given, "added to b after merge").has_value());
+    // a's post-merge addition must not have reached b.
+    EXPECT_FALSE(b.TryMatch(GherkinImpl::StepKeyword::Given, "added to a after merge").has_value());
+}
+
+TEST(GherkinRegistryMerge, FirstRegisteredPatternWinsOnAmbiguousOverlap) {
+    StepRegistry a;
+    a.RegisterGiven("an ambiguous step", [](TestContext& ctx) -> bool {
+        ctx.Set("winner", std::string("a"));
+        return true;
+    });
+
+    StepRegistry b;
+    b.RegisterGiven("an ambiguous step", [](TestContext& ctx) -> bool {
+        ctx.Set("winner", std::string("b"));
+        return true;
+    });
+
+    a.Merge(b);
+
+    // TryMatch's first-match-wins linear scan means a's own (pre-merge)
+    // registration still wins over b's merged-in duplicate - the same
+    // pre-existing behavior as registering a duplicate pattern directly,
+    // nothing new introduced by Merge.
+    std::optional<StepFunction> matched = a.TryMatch(GherkinImpl::StepKeyword::Given, "an ambiguous step");
+    ASSERT_TRUE(matched.has_value());
+    StepFunction stepFn = std::move(*matched);
+    TestContext ctx;
+    EXPECT_TRUE(stepFn(ctx));
+    EXPECT_EQ(ctx.Get<std::string>("winner"), "a");
+}

@@ -304,22 +304,32 @@ FeatureResult RunFeature(std::string_view featureText, StepRegistry& registry,
                           const GherkinFailureCallback& onFailure = impl::DefaultGherkinFailureAction);
 ```
 
-A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/GherkinCustomFailureHandler.cpp) below.
+A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp) below.
 
 ### Examples
 
-Ten complete, runnable Gherkin examples are included in [`examples/`](examples/):
+Three core Gherkin examples live directly in [`examples/`](examples/); the rest (including two multi-file registry-reuse demos) live in [`examples/gherkin/`](examples/gherkin/):
 
 - **[`GherkinBasket.cpp`](examples/GherkinBasket.cpp)** — basic Given/When/Then and step-parameter placeholders
 - **[`GherkinBackground.cpp`](examples/GherkinBackground.cpp)** — shared Background steps across multiple scenarios
 - **[`GherkinTagsAndHooks.cpp`](examples/GherkinTagsAndHooks.cpp)** — tag-scoped `@tag` filters and Before/After hook registration
-- **[`GherkinUnmatchedStep.cpp`](examples/GherkinUnmatchedStep.cpp)** — demonstrating fail-hard behavior on unmatched steps
-- **[`GherkinCollectFailures.cpp`](examples/GherkinCollectFailures.cpp)** — forced collect-failures mode to gather all step outcomes
-- **[`GherkinPlaceholders.cpp`](examples/GherkinPlaceholders.cpp)** — all four placeholder types (`{int}`, `{float}`, `{string}`, `{word}`)
-- **[`GherkinMultiThreaded.cpp`](examples/GherkinMultiThreaded.cpp)** — concurrent `RunFeature()` calls per thread with independent registries
-- **[`GherkinAdvanced.cpp`](examples/GherkinAdvanced.cpp)** — combined realistic feature with multiple scenarios
-- **[`GherkinVeryAdvanced.cpp`](examples/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
-- **[`GherkinCustomFailureHandler.cpp`](examples/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
+- **[`gherkin/GherkinUnmatchedStep.cpp`](examples/gherkin/GherkinUnmatchedStep.cpp)** — demonstrating fail-hard behavior on unmatched steps
+- **[`gherkin/GherkinCollectFailures.cpp`](examples/gherkin/GherkinCollectFailures.cpp)** — forced collect-failures mode to gather all step outcomes
+- **[`gherkin/GherkinPlaceholders.cpp`](examples/gherkin/GherkinPlaceholders.cpp)** — all four placeholder types (`{int}`, `{float}`, `{string}`, `{word}`)
+- **[`gherkin/GherkinMultiThreaded.cpp`](examples/gherkin/GherkinMultiThreaded.cpp)** — concurrent `RunFeature()` calls per thread with independent registries
+- **[`gherkin/GherkinAdvanced.cpp`](examples/gherkin/GherkinAdvanced.cpp)** — combined realistic feature with multiple scenarios
+- **[`gherkin/GherkinVeryAdvanced.cpp`](examples/gherkin/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
+- **[`gherkin/GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
+
+**Registry reuse (`StepRegistry::Merge()`)** — [`gherkin/BakerySteps.hpp`](examples/gherkin/BakerySteps.hpp) and [`gherkin/LibrarySteps.hpp`](examples/gherkin/LibrarySteps.hpp) are shared step-definition libraries, each reused unmodified across three example files with genuinely different scenarios (reading their `.feature` text from real files under [`gherkin/features/`](examples/gherkin/features/), not embedded strings):
+
+- **[`gherkin/GherkinBakeryStandardOrder.cpp`](examples/gherkin/GherkinBakeryStandardOrder.cpp)** — standard cake order paid in full
+- **[`gherkin/GherkinBakeryAllergenSubstitution.cpp`](examples/gherkin/GherkinBakeryAllergenSubstitution.cpp)** — allergen substitution surcharge, plus `Merge()` for a file-specific step
+- **[`gherkin/GherkinBakeryLateCancellation.cpp`](examples/gherkin/GherkinBakeryLateCancellation.cpp)** — late cancellation forfeits the deposit (intentionally exits non-zero)
+- **[`gherkin/GherkinLibraryStandardLending.cpp`](examples/gherkin/GherkinLibraryStandardLending.cpp)** — checkout and on-time return
+- **[`gherkin/GherkinLibraryHoldsAndReservations.cpp`](examples/gherkin/GherkinLibraryHoldsAndReservations.cpp)** — hold queue fulfillment, plus `Merge()` for a file-specific step
+- **[`gherkin/GherkinLibraryOverdueFines.cpp`](examples/gherkin/GherkinLibraryOverdueFines.cpp)** — overdue fine calculation
+- **[`gherkin/GherkinLibraryConcurrentLending.cpp`](examples/gherkin/GherkinLibraryConcurrentLending.cpp)** — one shared `StepRegistry`, built once, fanned out across four threads each running `RunFeature()` against a different branch's `.feature` file concurrently
 
 ### Opting out of Gherkin
 

@@ -224,21 +224,26 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Run Gherkin example binaries
-        # The Gherkin example binaries (examples/example_Gherkin*.cpp) are built and
-        # should run to completion without assertion failures. They are
-        # ctest-registered, so the Test step above exercises them, but running
-        # them again here directly verifies no additional binary issues under
-        # the Gherkin path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
-        # and example_GherkinCustomFailureHandler are deliberate "demonstrate
-        # failure/collect-all-steps" demos (they intentionally exit non-zero);
-        # every other example is expected to exit cleanly.
+        # The Gherkin example binaries (examples/example_Gherkin*.cpp and
+        # examples/gherkin/example_Gherkin*.cpp) are built and should run to
+        # completion without assertion failures. They are ctest-registered,
+        # so the Test step above exercises them, but running them again here
+        # directly verifies no additional binary issues under the Gherkin
+        # path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
+        # example_GherkinCustomFailureHandler, and
+        # example_GherkinBakeryLateCancellation are deliberate "demonstrate a
+        # realistic failure path" demos (they intentionally exit non-zero -
+        # the last one shows a genuine failing business-rule assertion,
+        # cancelling a custom cake order inside the deposit-forfeiture grace
+        # period, reusing the shared BakerySteps.hpp registry); every other
+        # example is expected to exit cleanly.
         run: |
           set -e
           for exe in build/examples/example_Gherkin*; do
             [ -x "$exe" ] || continue
             name=$(basename "$exe")
             echo "--- running $name ---"
-            if [ "$name" = "example_GherkinUnmatchedStep" ] || [ "$name" = "example_GherkinCollectFailures" ] || [ "$name" = "example_GherkinCustomFailureHandler" ]; then
+            if [ "$name" = "example_GherkinUnmatchedStep" ] || [ "$name" = "example_GherkinCollectFailures" ] || [ "$name" = "example_GherkinCustomFailureHandler" ] || [ "$name" = "example_GherkinBakeryLateCancellation" ]; then
               "$exe" || true
             else
               "$exe"

@@ -1436,6 +1436,20 @@ namespace Gherkin {
     // (tag-filtered AND/subset). NOT a singleton; passed by reference to RunFeature.
     class StepRegistry {
     public:
+        // Explicitly defaulted: documents that copy/move are an intentional,
+        // supported contract (every member - impl::StepDefinition's
+        // std::function thunk, impl::Hook - is already copyable), not an
+        // accident that a future move-only member addition could silently
+        // break. Behaviorally identical to the implicit special members this
+        // class already had (no user-declared constructor/destructor
+        // previously existed), so this is documentation, not a functional change.
+        StepRegistry() = default;
+        ~StepRegistry() = default;
+        StepRegistry(const StepRegistry&) = default;
+        StepRegistry& operator=(const StepRegistry&) = default;
+        StepRegistry(StepRegistry&&) = default;
+        StepRegistry& operator=(StepRegistry&&) = default;
+
         // Register step definitions. Named RegisterGiven/.../RegisterBut (not
         // Given/When/etc) to avoid macro collision with fluent DSL macros.
         template<typename F>
@@ -1469,6 +1483,29 @@ namespace Gherkin {
         void AddAfterHook(std::vector<std::string> tags, HookFunction hookFn) {
             const std::string label = impl::JoinTagsForLabel(tags);
             m_afterHooks.push_back(impl::Hook{ .tags = std::move(tags), .fn = std::move(hookFn), .label = label });
+        }
+
+        // Copies every step definition and hook from `other` into this
+        // registry (appended after anything already registered). Copy
+        // semantics: *this and other remain fully independent afterward -
+        // mutating one after Merge() never affects the other. Lets a
+        // consumer build a shared "library" StepRegistry once (e.g. via a
+        // factory function returning one by value) and reuse it across many
+        // scenarios/tests, optionally adding a few extra, test-specific step
+        // definitions on top of the shared set (see examples/gherkin/
+        // Gherkin{Bakery,Library}*.cpp). If both registries have a matching
+        // pattern for the same keyword, TryMatch's first-match-wins linear
+        // scan means whichever was registered/merged-in first still wins -
+        // the same pre-existing behavior as registering a duplicate pattern
+        // directly, nothing new introduced by Merge.
+        void Merge(const StepRegistry& other) {
+            for (std::size_t i = 0; i < impl::kStepKeywordCount; ++i) {
+                auto& bucket = m_definitions.at(i);
+                const auto& otherBucket = other.m_definitions.at(i);
+                bucket.insert(bucket.end(), otherBucket.begin(), otherBucket.end());
+            }
+            m_beforeHooks.insert(m_beforeHooks.end(), other.m_beforeHooks.begin(), other.m_beforeHooks.end());
+            m_afterHooks.insert(m_afterHooks.end(), other.m_afterHooks.begin(), other.m_afterHooks.end());
         }
 
         // --- Used internally by RunFeature()/RunScenario() below; not part

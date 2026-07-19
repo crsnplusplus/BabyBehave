@@ -229,7 +229,55 @@ FeatureResult RunFeature(std::string_view featureText, StepRegistry& registry,
 - **Parse-failure path**: instead of printing and exiting directly, `RunFeature()` now calls `onFailure(parsed.error)` and, if `onFailure` returns normally instead of exiting/throwing, returns a `FeatureResult` with an empty `featureName`, no `scenarioResults`, and `allPassed=false` — `RunFeature()` itself never exits/throws here, leaving that decision entirely to the callback.
 - **Scenario-failure path**: `impl::ReportScenarioFailureAndExit()` (the old `[[noreturn]]` print-and-exit function) was removed and replaced by `impl::FormatScenarioFailureMessage()`, which builds the identical diagnostic text but *returns* it as a `std::string` instead of printing/exiting. `RunScenario()` calls `onFailure(FormatScenarioFailureMessage(result))`; since collect-failures mode is already forced internally (see [forced collect-failures mode](#5--forced-collect-failures-mode-and-its-consequence) above), execution simply continues and `RunScenario()` returns `result` regardless of what `onFailure` does. If `onFailure` exits/throws (the default), execution stops there, identical to today. If it returns normally, `RunFeature()` moves on to the next Scenario — a "collect Gherkin failures across the whole Feature" mode that falls out naturally from a non-exiting callback.
 - `FeatureResult`'s doc comment was updated accordingly: it's only true that `RunFeature()` "never returns with `allPassed==false`" for the *default* callback; a non-exiting custom callback is exactly what makes a `false` return possible.
-- See [`examples/GherkinCustomFailureHandler.cpp`](../../examples/GherkinCustomFailureHandler.cpp) for a full example that collects every failure message into a `std::vector<std::string>` instead of exiting, then decides its own process exit code from `FeatureResult::allPassed` at the end.
+- See [`examples/gherkin/GherkinCustomFailureHandler.cpp`](../../examples/gherkin/GherkinCustomFailureHandler.cpp) for a full example that collects every failure message into a `std::vector<std::string>` instead of exiting, then decides its own process exit code from `FeatureResult::allPassed` at the end.
+
+## v0.8.2: StepRegistry::Merge() for registry reuse
+
+`StepRegistry` gained a `Merge()` method and explicitly-defaulted special member functions, letting a consumer build one shared "library" registry once (typically via a factory function returning a `StepRegistry` by value) and reuse it across many, differently-shaped tests instead of re-registering the same step definitions in every test file.
+
+```cpp
+void Merge(const StepRegistry& other);
+
+StepRegistry() = default;
+~StepRegistry() = default;
+StepRegistry(const StepRegistry&) = default;
+StepRegistry& operator=(const StepRegistry&) = default;
+StepRegistry(StepRegistry&&) = default;
+StepRegistry& operator=(StepRegistry&&) = default;
+```
+
+- **Copy semantics, not aliasing** — `Merge()` copies every step definition and hook from `other` into `*this` (appended after anything already registered). `*this` and `other` remain fully independent afterward: mutating one post-`Merge()` (registering an additional step, or `Merge()`-ing something else in) never affects the other. This is what makes "one shared registry, several call sites each layering on their own extra steps" safe — no call site can accidentally see another's later additions.
+- **The special member functions were already implicit** (no user-declared constructor/destructor/copy/move existed before) — declaring them `= default` explicitly is documentation of an intentional, supported contract (every member, `impl::StepDefinition`'s thunk and `impl::Hook`, is already copyable), not a behavioral change. clang-tidy's `cppcoreguidelines-special-member-functions` check requires the destructor alongside copy/move once any of them is user-declared, hence `~StepRegistry() = default;` alongside the copy/move pair.
+- **First-registered-wins on overlap, unchanged** — if both registries have a matching pattern for the same keyword, `TryMatch()`'s first-match-wins linear scan means whichever was registered (or merged in) *first* still wins. This is the exact same pre-existing behavior as registering a literal duplicate pattern directly on one registry; `Merge()` introduces nothing new here, it just makes it possible to end up with a duplicate across two registries instead of within one.
+- **Typical shape**: a header exposes `MakeXStepRegistry()` returning a populated `StepRegistry` by value; each test builds its own registry from the factory and, optionally, `Merge()`s in a handful of test-specific step definitions on top:
+
+```cpp
+// SharedSteps.hpp
+inline StepRegistry MakeXStepRegistry() {
+    StepRegistry registry;
+    registry.RegisterGiven(/* ... */);
+    // ... ~10-15 step definitions covering the domain's common operations
+    return registry;
+}
+
+// SomeTest.cpp
+StepRegistry registry = MakeXStepRegistry();
+
+StepRegistry extras;
+extras.RegisterAnd("a test-specific step", /* ... */);
+registry.Merge(extras);
+
+RunFeature(featureText, registry, "SomeTest.cpp");
+```
+
+- See [`examples/gherkin/BakerySteps.hpp`](../../examples/gherkin/BakerySteps.hpp) and [`examples/gherkin/LibrarySteps.hpp`](../../examples/gherkin/LibrarySteps.hpp) for two complete shared step libraries (a bakery's custom cake ordering system, and a library's book lending system), each reused unmodified across three `GherkinBakery*.cpp`/`GherkinLibrary*.cpp` examples with genuinely different scenarios; `GherkinBakeryAllergenSubstitution.cpp` and `GherkinLibraryHoldsAndReservations.cpp` additionally demonstrate `Merge()` layering a file-specific step on top of the shared registry. Unlike the rest of this project's Gherkin examples, these seven read their scenario text from real, standalone `.feature` files under `examples/gherkin/features/` rather than an embedded C++ raw string literal - purely an example-level choice (`RunFeature()` still only ever sees a `std::string_view` and never touches the filesystem itself).
+- Unit tests: `tests/test_Gherkin_Integration.cpp`'s `GherkinRegistryMerge` suite covers combining steps from both registries, post-`Merge()` independence in both directions, and first-registered-wins precedence on an ambiguous overlap.
+
+### Registry reuse across threads
+
+A shared, read-only `StepRegistry` is also safe to fan out across multiple *threads*, not just multiple sequential test files: [`examples/gherkin/GherkinLibraryConcurrentLending.cpp`](../../examples/gherkin/GherkinLibraryConcurrentLending.cpp) builds one `StepRegistry` up front, then runs four different branches' `.feature` files concurrently (via `std::async`) against that same instance. This is safe because all registration finishes on the main thread before any thread starts, and from that point on `RunFeature()` only calls `StepRegistry`'s `const` member functions (`TryMatch()`, `BeforeHooks()`, `AfterHooks()`) - concurrent `const` reads of an object nobody is mutating are safe, same as reading a `std::vector`/`std::string` from multiple threads. Each Scenario still gets its own private `TestContext` internally (`RunScenario()` constructs a fresh `BabyBehaveTest` per Scenario), so there's no shared *mutable* state despite the shared registry - contrast with [`examples/gherkin/GherkinMultiThreaded.cpp`](../../examples/gherkin/GherkinMultiThreaded.cpp), where every thread builds its own independent registry instead.
+
+**Concurrency hazard, called out explicitly because it previews a v0.9.0 risk**: `RunFeature()`'s *default* `onFailure` callback (`impl::DefaultGherkinFailureAction`) prints and calls `std::exit()` - safe from one thread, but **not** safe to invoke concurrently from several scenario threads at once (a std::exit() race, and interleaved stderr output). `GherkinLibraryConcurrentLending.cpp` therefore passes an explicit, mutex-guarded `GherkinFailureCallback` that only ever appends to a shared `std::vector<std::string>` and never exits; each thread's `FeatureResult` is collected via `std::future::get()` and inspected back on the main thread once every thread has joined. This exact hazard is why any future v0.9.0 "parallel Scenario execution" feature would need to either mandate a non-exiting `onFailure` callback under concurrency, or provide its own thread-safe default - it is not solved by today's v0.8.2 `Merge()`/reuse work, only worked around at the example level.
 
 ## Backlog beyond v0.8.1
 
