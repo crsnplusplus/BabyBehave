@@ -55,6 +55,26 @@ add_executable(test_BabyBehaveTest_NoSourceLocation test_BabyBehaveTest_NoSource
 target_link_libraries(test_BabyBehaveTest_NoSourceLocation BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
 add_test(BabyBehaveTestNoSourceLocation test_BabyBehaveTest_NoSourceLocation)
 
+# Gherkin interpreter tests (BabyBehave::BDD::Gherkin - see bdd.hpp and
+# docs/design/gherkin-support.md). Each #defines BABYBEHAVE_ENABLE_GHERKIN
+# itself before #include <BabyBehave/bdd.hpp> - the same pattern already
+# used by examples/Gherkin*.cpp - rather than depending on the
+# babybehave_gherkin_flags/BABYBEHAVE_ENABLE_GHERKIN_TESTS option defined in
+# the root CMakeLists.txt (that option/interface library isn't actually
+# linked into any target today - examples/CMakeLists.txt's Gherkin
+# executables don't use it either - so these two follow the convention
+# that's actually in effect, not the seemingly-unused option). Own
+# executables for the same per-TU coverage-isolation and death-test-process-
+# isolation reasons as every other file in this list (test_Gherkin_Integration
+# in particular contains EXPECT_EXIT death tests).
+add_executable(test_Gherkin_Parser test_Gherkin_Parser.cpp)
+target_link_libraries(test_Gherkin_Parser BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
+add_test(GherkinParser test_Gherkin_Parser)
+
+add_executable(test_Gherkin_Integration test_Gherkin_Integration.cpp)
+target_link_libraries(test_Gherkin_Integration BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
+add_test(GherkinIntegration test_Gherkin_Integration)
+
 add_subdirectory(bdd)
 
 # BabyBehaveTest's step narration ("Given a: .../With: ...", printed as each
@@ -71,5 +91,7 @@ set_tests_properties(
   BabyBehaveTestSoftCheckAndCollectFailures
   BabyBehaveTestCallbacksAndDeathTests
   BabyBehaveTestNoSourceLocation
+  GherkinParser
+  GherkinIntegration
   PROPERTIES ENVIRONMENT "BABYBEHAVE_QUIET=1"
 )

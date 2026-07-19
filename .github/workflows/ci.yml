@@ -207,6 +207,44 @@ jobs:
           git commit -m "Update coverage/build badges [skip ci]"
           git push
 
+  gherkin:
+    name: gherkin (interpreter and examples)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run Gherkin example binaries
+        # The Gherkin example binaries (examples/example_Gherkin*.cpp) are built and
+        # should run to completion without assertion failures. They are
+        # ctest-registered, so the Test step above exercises them, but running
+        # them again here directly verifies no additional binary issues under
+        # the Gherkin path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
+        # and example_GherkinCustomFailureHandler are deliberate "demonstrate
+        # failure/collect-all-steps" demos (they intentionally exit non-zero);
+        # every other example is expected to exit cleanly.
+        run: |
+          set -e
+          for exe in build/examples/example_Gherkin*; do
+            [ -x "$exe" ] || continue
+            name=$(basename "$exe")
+            echo "--- running $name ---"
+            if [ "$name" = "example_GherkinUnmatchedStep" ] || [ "$name" = "example_GherkinCollectFailures" ] || [ "$name" = "example_GherkinCustomFailureHandler" ]; then
+              "$exe" || true
+            else
+              "$exe"
+            fi
+          done
+
   sanitizers:
     name: sanitizers (ASan+UBSan)
     runs-on: ubuntu-latest
