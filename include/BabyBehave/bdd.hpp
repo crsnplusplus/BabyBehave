@@ -3,6 +3,10 @@
 
 #pragma once
 
+<<<<<<< HEAD
+#include <algorithm>
+=======
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
 #include <functional>
 #include <vector>
 #include <variant>
@@ -14,6 +18,10 @@
 #include <stdexcept>
 #include <type_traits>
 #include <iostream>
+<<<<<<< HEAD
+#include <cstdint>
+=======
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
 #include <cstdlib>
 #include <numeric>
 #include <utility>
@@ -54,7 +62,11 @@ namespace BabyBehave::BDD {
         inline bool& NarrationEnabledFlag() {
             static bool enabled = [] {
                 const char* env = std::getenv("BABYBEHAVE_QUIET");
+<<<<<<< HEAD
+                return env == nullptr || *env == '\0' || std::string_view(env) == "0";
+=======
                 return env == nullptr || env[0] == '\0' || std::string_view(env) == "0";
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
             }();
             return enabled;
         }
@@ -112,7 +124,11 @@ namespace BabyBehave::BDD {
         // style: Plain always shows which step it was on before a hang or
         // a hard exit; Arrow/Tree only show their summary if Execute()
         // gets to return.
+<<<<<<< HEAD
+        enum class NarrationStyle : std::uint8_t {
+=======
         enum class NarrationStyle {
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
             Plain,
             Arrow,
             Tree,
@@ -155,7 +171,11 @@ namespace BabyBehave::BDD {
         // one, it is never buffered (BabyBehaveTest::m_testName already
         // holds its name), and it roots the Tree renderer's layout
         // specially rather than appearing in the step list.
+<<<<<<< HEAD
+        enum class StepKindTag : std::uint8_t {
+=======
         enum class StepKindTag {
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
             With,
             When,
             Then,
@@ -224,7 +244,11 @@ namespace BabyBehave::BDD {
         // instead, outside what gcov attributes to this file.
         inline std::string JoinNarrationLines(const std::vector<std::string>& lines) {
             return std::accumulate(std::next(lines.begin()), lines.end(), lines.front(),
+<<<<<<< HEAD
+                                    [](const std::string& acc, const std::string& line) { return acc + kNewLine + line; });
+=======
                                     [](std::string acc, const std::string& line) { return acc + kNewLine + line; });
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
         }
 
         // "-> Given a: X" / "    + With: Y" / "    -> When: Z" /
@@ -280,6 +304,26 @@ namespace BabyBehave::BDD {
             const std::vector<const NarrationStepEntry*>* children;
         };
 
+<<<<<<< HEAD
+        // Appends one indented, box-drawing-prefixed line per child entry
+        // (WITH under GIVEN, or And/Or/But under a THEN branch) - the exact
+        // same "last child gets the arc-corner glyph, everyone else gets
+        // the tee glyph" pattern RenderTree() below needs at both nesting
+        // points, factored out so it isn't duplicated (and so it doesn't
+        // count twice toward RenderTree()'s own cognitive complexity).
+        inline void AppendTreeChildLines(std::vector<std::string>& lines, std::string_view indent,
+                                          const std::string& continuation,
+                                          const std::vector<const NarrationStepEntry*>& children) {
+            for (std::size_t i = 0; i < children.size(); ++i) {
+                const bool lastChild = (i + 1 == children.size());
+                lines.push_back(std::string(indent) + continuation +
+                                 std::string(lastChild ? kTreeBranchLast : kTreeBranchMid) +
+                                 PadTreeLabel(TreeKindLabel(children[i]->kind)) + children[i]->name);
+            }
+        }
+
+=======
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
         // Unicode box-drawing tree: GIVEN, WHEN and THEN are always
         // top-level siblings (in that order); WITH nests one level under
         // GIVEN, and And/Or/But nest one level under THEN (under the
@@ -307,18 +351,36 @@ namespace BabyBehave::BDD {
             }
 
             std::vector<TreeBranch> branches;
+<<<<<<< HEAD
+            branches.reserve(whenEntries.size() + std::max(thenEntries.size(), thenChildren.size()));
+            for (const auto* entry : whenEntries) {
+                branches.push_back(
+                    TreeBranch{ .label = TreeKindLabel(StepKindTag::When), .name = &entry->name, .children = &kNoChildren });
+            }
+            if (thenEntries.empty()) {
+                for (const auto* entry : thenChildren) {
+                    branches.push_back(
+                        TreeBranch{ .label = TreeKindLabel(entry->kind), .name = &entry->name, .children = &kNoChildren });
+=======
             for (const auto* entry : whenEntries) {
                 branches.push_back(TreeBranch{ TreeKindLabel(StepKindTag::When), &entry->name, &kNoChildren });
             }
             if (thenEntries.empty()) {
                 for (const auto* entry : thenChildren) {
                     branches.push_back(TreeBranch{ TreeKindLabel(entry->kind), &entry->name, &kNoChildren });
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
                 }
             } else {
                 for (std::size_t i = 0; i < thenEntries.size(); ++i) {
                     const bool isLastThen = (i + 1 == thenEntries.size());
+<<<<<<< HEAD
+                    branches.push_back(TreeBranch{ .label = TreeKindLabel(StepKindTag::Then),
+                                                    .name = &thenEntries[i]->name,
+                                                    .children = isLastThen ? &thenChildren : &kNoChildren });
+=======
                     branches.push_back(TreeBranch{ TreeKindLabel(StepKindTag::Then), &thenEntries[i]->name,
                                                     isLastThen ? &thenChildren : &kNoChildren });
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
                 }
             }
             const bool givenIsLastGroup = branches.empty();
@@ -329,12 +391,16 @@ namespace BabyBehave::BDD {
             lines.push_back(std::string(kIndent) + std::string(givenIsLastGroup ? kTreeBranchLast : kTreeBranchMid) + PadTreeLabel("GIVEN") + testName);
 
             const std::string givenChildContinuation = givenIsLastGroup ? "   " : std::string(kTreeVerticalBar) + "  ";
+<<<<<<< HEAD
+            AppendTreeChildLines(lines, kIndent, givenChildContinuation, givenChildren);
+=======
             for (std::size_t i = 0; i < givenChildren.size(); ++i) {
                 const bool lastChild = (i + 1 == givenChildren.size());
                 lines.push_back(std::string(kIndent) + givenChildContinuation +
                                  std::string(lastChild ? kTreeBranchLast : kTreeBranchMid) +
                                  PadTreeLabel(TreeKindLabel(givenChildren[i]->kind)) + givenChildren[i]->name);
             }
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
 
             for (std::size_t i = 0; i < branches.size(); ++i) {
                 const bool lastBranch = (i + 1 == branches.size());
@@ -343,6 +409,9 @@ namespace BabyBehave::BDD {
                                  PadTreeLabel(branches[i].label) + *branches[i].name);
 
                 const std::string branchChildContinuation = lastBranch ? "   " : std::string(kTreeVerticalBar) + "  ";
+<<<<<<< HEAD
+                AppendTreeChildLines(lines, kIndent, branchChildContinuation, *branches[i].children);
+=======
                 const auto& children = *branches[i].children;
                 for (std::size_t c = 0; c < children.size(); ++c) {
                     const bool lastGrandchild = (c + 1 == children.size());
@@ -350,6 +419,7 @@ namespace BabyBehave::BDD {
                                      std::string(lastGrandchild ? kTreeBranchLast : kTreeBranchMid) +
                                      PadTreeLabel(TreeKindLabel(children[c]->kind)) + children[c]->name);
                 }
+>>>>>>> 867fc80e89b2260b872bed258b6cf1c0fbff5e4b
             }
             return JoinNarrationLines(lines);
         }
