@@ -922,7 +922,11 @@ namespace BabyBehave::BDD {
             // outcome (m_anyStepFailedForNarration) is known - see
             // NarrationStyle's comment for why this point in Execute() is
             // the only place that happens (a real exit-on-failure default
-            // callback never lets control reach here).
+            // callback never lets control reach here). Either way, a
+            // trailing blank line follows the block: without it, one
+            // scenario's Tree/Arrow output runs straight into the next
+            // scenario's "[ OK ]"/"[ FAIL ]" header with nothing marking
+            // where one ends and the other begins.
             if (detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
                 detail::PrintLine();
             } else {
@@ -930,6 +934,7 @@ namespace BabyBehave::BDD {
                 detail::PrintLine(detail::NarrationStyleFlag() == detail::NarrationStyle::Tree
                                        ? detail::RenderTree(m_testName, m_narrationSteps, passed)
                                        : detail::RenderArrow(m_testName, m_narrationSteps, passed));
+                detail::PrintLine();
             }
             return m_result;
         }

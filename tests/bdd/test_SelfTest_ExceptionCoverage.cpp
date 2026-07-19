@@ -25,13 +25,17 @@
 // defaults call std::exit() on any failure/exception, which would kill the
 // process before later scenarios - several of which are *expected* to
 // fail/throw on purpose - ever ran), one RunXxxScenario() function per
-// scenario returning bool, a ReportScenario() helper, and a main() that
-// runs every scenario and returns EXIT_SUCCESS/FAILURE based on the pass
-// count. This is a separate, self-contained TU (not #including the other
-// .cpp file), so the small amount of scaffolding is duplicated locally on
-// purpose.
+// scenario returning bool, and a main() that runs every scenario and
+// returns EXIT_SUCCESS/FAILURE based on the pass count. This is a
+// separate, self-contained TU (not #including the other .cpp file), so
+// the scenario functions themselves are duplicated locally on purpose -
+// but the ReportScenario()/mismatch-diagnostic machinery is shared via
+// SelfTestDiagnostics.hpp (see that header's comment for why: this file
+// used to keep its own copy, which fell behind test_SelfTest.cpp's).
 
 #include <BabyBehave/bdd.hpp>
+
+#include "SelfTestDiagnostics.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -66,14 +70,6 @@ struct CallbackRecorder {
         });
     }
 };
-
-void ReportScenario(const std::string& name, bool passed, int& passCount, int& totalCount) {
-    ++totalCount;
-    if (passed) {
-        ++passCount;
-    }
-    std::cout << (passed ? "[OK]   " : "[FAIL] ") << name << '\n';
-}
 
 void SetupTrivialContext(TestContext&) {}
 
@@ -490,35 +486,45 @@ bool RunSoftCheckTwoFailuresScenario() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    ParseCommandLine(argc, argv);
+
     int passCount = 0;
     int totalCount = 0;
 
-    ReportScenario("ContextSetupThrowsNonStd: context setup throws a non-std::exception type",
-                    RunContextSetupThrowsNonStdScenario(), passCount, totalCount);
-    ReportScenario("PreconditionThrowsNonStd: With step throws a non-std::exception type",
-                    RunPreconditionThrowsNonStdScenario(), passCount, totalCount);
-    ReportScenario("ActionThrowsNonStd: When step throws a non-std::exception type",
-                    RunActionThrowsNonStdScenario(), passCount, totalCount);
-    ReportScenario("AndThrowsNonStd: And step throws a non-std::exception type", RunAndThrowsNonStdScenario(),
+    // Every scenario below drives a BabyBehaveTest chain whose whole point
+    // is that some step/callback misbehaves - so BabyBehave's own narration
+    // always reports FAIL for these, hence expectedLabel="FAIL" throughout.
+    // MissingKeyDirectThrowString is the one exception: it never constructs
+    // a BabyBehaveTest at all (just a direct TestContext::Get<T> call), so
+    // there's no narration to capture - it keeps the terse bool overload,
+    // same treatment as test_SelfTest.cpp's sibling MissingKeyDirectThrow.
+    ReportScenario("ContextSetupThrowsNonStd: context setup throws a non-std::exception type", "FAIL",
+                    [] { return RunContextSetupThrowsNonStdScenario(); }, passCount, totalCount);
+    ReportScenario("PreconditionThrowsNonStd: With step throws a non-std::exception type", "FAIL",
+                    [] { return RunPreconditionThrowsNonStdScenario(); }, passCount, totalCount);
+    ReportScenario("ActionThrowsNonStd: When step throws a non-std::exception type", "FAIL",
+                    [] { return RunActionThrowsNonStdScenario(); }, passCount, totalCount);
+    ReportScenario("AndThrowsNonStd: And step throws a non-std::exception type", "FAIL",
+                    [] { return RunAndThrowsNonStdScenario(); }, passCount, totalCount);
+    ReportScenario("OrThrowsStd: Or step throws a std::exception", "FAIL", [] { return RunOrThrowsStdScenario(); },
                     passCount, totalCount);
-    ReportScenario("OrThrowsStd: Or step throws a std::exception", RunOrThrowsStdScenario(), passCount, totalCount);
-    ReportScenario("OrThrowsNonStd: Or step throws a non-std::exception type", RunOrThrowsNonStdScenario(),
+    ReportScenario("OrThrowsNonStd: Or step throws a non-std::exception type", "FAIL",
+                    [] { return RunOrThrowsNonStdScenario(); }, passCount, totalCount);
+    ReportScenario("ButThrowsStd: But step throws a std::exception", "FAIL", [] { return RunButThrowsStdScenario(); },
                     passCount, totalCount);
-    ReportScenario("ButThrowsStd: But step throws a std::exception", RunButThrowsStdScenario(), passCount,
-                    totalCount);
-    ReportScenario("ButThrowsNonStd: But step throws a non-std::exception type", RunButThrowsNonStdScenario(),
-                    passCount, totalCount);
-    ReportScenario("PostconditionThrowsStd: Then step throws a std::exception", RunPostconditionThrowsStdScenario(),
-                    passCount, totalCount);
-    ReportScenario("ThrowingConditionCallback: SetOnConditionNotVerifiedCallback itself throws",
-                    RunThrowingConditionCallbackScenario(), passCount, totalCount);
-    ReportScenario("ThrowingExceptionCallback: SetOnExceptionCallback itself throws",
-                    RunThrowingExceptionCallbackScenario(), passCount, totalCount);
+    ReportScenario("ButThrowsNonStd: But step throws a non-std::exception type", "FAIL",
+                    [] { return RunButThrowsNonStdScenario(); }, passCount, totalCount);
+    ReportScenario("PostconditionThrowsStd: Then step throws a std::exception", "FAIL",
+                    [] { return RunPostconditionThrowsStdScenario(); }, passCount, totalCount);
+    ReportScenario("ThrowingConditionCallback: SetOnConditionNotVerifiedCallback itself throws", "FAIL",
+                    [] { return RunThrowingConditionCallbackScenario(); }, passCount, totalCount);
+    ReportScenario("ThrowingExceptionCallback: SetOnExceptionCallback itself throws", "FAIL",
+                    [] { return RunThrowingExceptionCallbackScenario(); }, passCount, totalCount);
     ReportScenario("MissingKeyDirectThrowString: TestContext::Get<std::string> on missing key throws std::out_of_range",
                     RunMissingKeyDirectThrowStringScenario(), passCount, totalCount);
-    ReportScenario("SoftCheckTwoFailures: two failed sub-checks are joined with \"; \"",
-                    RunSoftCheckTwoFailuresScenario(), passCount, totalCount);
+    ReportScenario("SoftCheckTwoFailures: two failed sub-checks are joined with \"; \"", "FAIL",
+                    [] { return RunSoftCheckTwoFailuresScenario(); }, passCount, totalCount);
 
     std::cout << '\n' << passCount << "/" << totalCount << " scenarios behaved as expected\n";
 

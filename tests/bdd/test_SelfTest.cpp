@@ -27,8 +27,11 @@
 #include <BabyBehave/bdd.hpp>
 #include <BabyBehave/reporters.hpp>
 
+#include "SelfTestDiagnostics.hpp"
+
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -72,14 +75,6 @@ struct CallbackRecorder {
         });
     }
 };
-
-void ReportScenario(const std::string& name, bool passed, int& passCount, int& totalCount) {
-    ++totalCount;
-    if (passed) {
-        ++passCount;
-    }
-    std::cout << (passed ? "[OK]   " : "[FAIL] ") << name << '\n';
-}
 
 // ---------------------------------------------------------------------
 // Scenario 1: fully happy path chain - With/When/Then/And/Or/But all
@@ -616,16 +611,14 @@ bool RunNarrationDisabledScenario() {
 // Runs Execute() under both Arrow and Tree (all six step kinds, plus a
 // second Tree run with And/Or/But but no Then, to reach RenderTree()'s
 // "orphaned assertions" fallback branch) to exercise NarrateStep()'s
-// buffering branch and Execute()'s end-of-run render dispatch - their
-// narration output isn't captured (see below for why), so it just prints
-// to the real terminal like every other scenario's narration in this
-// file. Correctness of the rendered text itself is checked separately, by
-// calling detail::RenderArrow()/RenderTree() directly against hand-built
-// step lists: unlike gtest's CaptureStdout() (which redirects the actual
-// OS file descriptor), this file's std::cout.rdbuf()-swap capture trick
-// (see RunNarrationDisabledScenario) can't observe PrintLine()'s output
-// when __cpp_lib_print is available, since std::println() writes to
-// stdout directly rather than through std::cout's stream buffer.
+// buffering branch and Execute()'s end-of-run render dispatch. Wrapped in
+// CaptureStdoutFd (fd-level, so it works even when PrintLine() writes via
+// std::println() straight to the OS file descriptor - see
+// RunNarrationDisabledScenario's comment for why a std::cout.rdbuf()-swap
+// wouldn't) purely to keep this narration off the real terminal; the
+// captured text itself is discarded, since correctness of the rendered
+// output is checked separately below by calling detail::RenderArrow()/
+// RenderTree() directly against hand-built step lists.
 // ---------------------------------------------------------------------
 
 bool RunNarrationStyleScenario() {
@@ -634,35 +627,37 @@ bool RunNarrationStyleScenario() {
                        detail::ParseNarrationStyleEnv("tree") == NarrationStyle::Tree &&
                        detail::ParseNarrationStyleEnv("bogus") == NarrationStyle::Plain;
 
-    SetNarrationStyle(NarrationStyle::Arrow);
-    {
-        auto test = GivenA(SetupTrivialContext);
-        test.With(StepPreconditionTrue)
-            .When(StepActionTrue)
-            .Then(StepAndTrue)
-            .And(StepAndTrue)
-            .Or(StepOrTrue)
-            .But(StepButTrue);
-    }
+    (void)CaptureStdoutFd([] {
+        SetNarrationStyle(NarrationStyle::Arrow);
+        {
+            auto test = GivenA(SetupTrivialContext);
+            test.With(StepPreconditionTrue)
+                .When(StepActionTrue)
+                .Then(StepAndTrue)
+                .And(StepAndTrue)
+                .Or(StepOrTrue)
+                .But(StepButTrue);
+        }
 
-    SetNarrationStyle(NarrationStyle::Tree);
-    {
-        auto test = GivenA(SetupTrivialContext);
-        test.With(StepPreconditionTrue)
-            .When(StepActionTrue)
-            .Then(StepAndTrue)
-            .And(StepAndTrue)
-            .Or(StepOrTrue)
-            .But(StepButTrue);
-    }
-    {
-        auto test = GivenA(SetupTrivialContext);
-        test.SetCollectFailuresMode(true);
-        test.With(StepPreconditionTrue)
-            .And(StepAndTrue)
-            .Or([](TestContext&) { return false; })
-            .But(StepButTrue);
-    }
+        SetNarrationStyle(NarrationStyle::Tree);
+        {
+            auto test = GivenA(SetupTrivialContext);
+            test.With(StepPreconditionTrue)
+                .When(StepActionTrue)
+                .Then(StepAndTrue)
+                .And(StepAndTrue)
+                .Or(StepOrTrue)
+                .But(StepButTrue);
+        }
+        {
+            auto test = GivenA(SetupTrivialContext);
+            test.SetCollectFailuresMode(true);
+            test.With(StepPreconditionTrue)
+                .And(StepAndTrue)
+                .Or([](TestContext&) { return false; })
+                .But(StepButTrue);
+        }
+    });
     SetNarrationStyle(NarrationStyle::Plain);
 
     const std::vector<detail::NarrationStepEntry> allKinds{
@@ -700,32 +695,36 @@ bool RunNarrationStyleScenario() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    ParseCommandLine(argc, argv);
+
     int passCount = 0;
     int totalCount = 0;
 
-    ReportScenario("HappyPath: full With/When/Then/And/Or/But chain succeeds", RunHappyPathScenario(), passCount,
-                    totalCount);
-    ReportScenario("FailingAction: Action returns false", RunFailingConditionScenario(), passCount, totalCount);
-    ReportScenario("FailingPrecondition: Precondition returns false", RunFailingPreconditionScenario(), passCount,
-                    totalCount);
-    ReportScenario("StdException: step throws std::exception", RunStdExceptionScenario(), passCount, totalCount);
-    ReportScenario("NonStdException: step throws a non-std::exception value", RunNonStdExceptionScenario(),
+    ReportScenario("HappyPath: full With/When/Then/And/Or/But chain succeeds", "OK",
+                    [] { return RunHappyPathScenario(); }, passCount, totalCount);
+    ReportScenario("FailingAction: Action returns false", "FAIL", [] { return RunFailingConditionScenario(); },
                     passCount, totalCount);
-    ReportScenario("ContextRoundTrip: Set/Get shared_ptr<SmallStruct> round-trips and shares state",
-                    RunContextRoundTripScenario(), passCount, totalCount);
+    ReportScenario("FailingPrecondition: Precondition returns false", "FAIL",
+                    [] { return RunFailingPreconditionScenario(); }, passCount, totalCount);
+    ReportScenario("StdException: step throws std::exception", "FAIL", [] { return RunStdExceptionScenario(); },
+                    passCount, totalCount);
+    ReportScenario("NonStdException: step throws a non-std::exception value", "FAIL",
+                    [] { return RunNonStdExceptionScenario(); }, passCount, totalCount);
+    ReportScenario("ContextRoundTrip: Set/Get shared_ptr<SmallStruct> round-trips and shares state", "OK",
+                    [] { return RunContextRoundTripScenario(); }, passCount, totalCount);
     ReportScenario("MissingKeyDirectThrow: TestContext::Get on missing key throws std::out_of_range",
                     RunMissingKeyDirectThrowScenario(), passCount, totalCount);
-    ReportScenario("MissingKeyInStep: missing-key throw inside a step is funneled through onException",
-                    RunMissingKeyInStepScenario(), passCount, totalCount);
-    ReportScenario("ContextSetupThrows: context setup exception is reported via onConditionNotVerified",
-                    RunContextSetupThrowsScenario(), passCount, totalCount);
-    ReportScenario("CollectFailuresMode: failures are recorded and execution continues past them",
-                    RunCollectFailuresModeScenario(), passCount, totalCount);
-    ReportScenario("SoftCheckCollectFailures: named sub-checks surface in StepResult::message",
-                    RunSoftCheckCollectFailuresScenario(), passCount, totalCount);
-    ReportScenario("SoftCheckDefaultCallback: named sub-checks surface in the default failure callback",
-                    RunSoftCheckDefaultCallbackScenario(), passCount, totalCount);
+    ReportScenario("MissingKeyInStep: missing-key throw inside a step is funneled through onException", "FAIL",
+                    [] { return RunMissingKeyInStepScenario(); }, passCount, totalCount);
+    ReportScenario("ContextSetupThrows: context setup exception is reported via onConditionNotVerified", "FAIL",
+                    [] { return RunContextSetupThrowsScenario(); }, passCount, totalCount);
+    ReportScenario("CollectFailuresMode: failures are recorded and execution continues past them", "FAIL",
+                    [] { return RunCollectFailuresModeScenario(); }, passCount, totalCount);
+    ReportScenario("SoftCheckCollectFailures: named sub-checks surface in StepResult::message", "FAIL",
+                    [] { return RunSoftCheckCollectFailuresScenario(); }, passCount, totalCount);
+    ReportScenario("SoftCheckDefaultCallback: named sub-checks surface in the default failure callback", "FAIL",
+                    [] { return RunSoftCheckDefaultCallbackScenario(); }, passCount, totalCount);
     ReportScenario("NarrationDisabled: SetNarrationEnabled(false) silences stdout/stderr output",
                     RunNarrationDisabledScenario(), passCount, totalCount);
     ReportScenario("NarrationStyle: ParseNarrationStyleEnv mapping and Arrow/Tree renderer output",
