@@ -215,6 +215,9 @@ if(BABYBEHAVE_ENABLE_COVERAGE)
 		add_custom_target(coverage-bbh
 			COMMAND ${CMAKE_COMMAND} -E rm -f "${_st_gcda}" "${_st2_gcda}" "${_st3_gcda}" "${_st4_gcda}" "${_st5_gcda}"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest> || true"
+			COMMAND sh -c "BABYBEHAVE_STYLE=arrow $<TARGET_FILE:test_bdd_SelfTest> || true"
+			COMMAND sh -c "BABYBEHAVE_STYLE=tree $<TARGET_FILE:test_bdd_SelfTest> || true"
+			COMMAND sh -c "BABYBEHAVE_STYLE=bogus $<TARGET_FILE:test_bdd_SelfTest> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_ExceptionCoverage> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_DefaultConditionExit> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_DefaultExceptionExit> || true"

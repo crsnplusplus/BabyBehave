@@ -39,3 +39,14 @@ set_tests_properties(SelfTestDefaultExceptionExit PROPERTIES WILL_FAIL TRUE)
 add_executable(test_bdd_SelfTest_NoSourceLocation test_SelfTest_NoSourceLocation.cpp)
 target_link_libraries(test_bdd_SelfTest_NoSourceLocation PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
 add_test(NAME SelfTestNoSourceLocation COMMAND test_bdd_SelfTest_NoSourceLocation)
+
+# Coverage variants: re-run SelfTest with different BABYBEHAVE_STYLE values
+# to cover the ParseNarrationStyleEnv() branches for "arrow", "tree", and invalid values.
+add_test(NAME SelfTestNarrationStyleArrow COMMAND test_bdd_SelfTest)
+set_tests_properties(SelfTestNarrationStyleArrow PROPERTIES ENVIRONMENT "BABYBEHAVE_STYLE=arrow")
+
+add_test(NAME SelfTestNarrationStyleTree COMMAND test_bdd_SelfTest)
+set_tests_properties(SelfTestNarrationStyleTree PROPERTIES ENVIRONMENT "BABYBEHAVE_STYLE=tree")
+
+add_test(NAME SelfTestNarrationStyleBogus COMMAND test_bdd_SelfTest)
+set_tests_properties(SelfTestNarrationStyleBogus PROPERTIES ENVIRONMENT "BABYBEHAVE_STYLE=bogus")
