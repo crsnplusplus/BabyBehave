@@ -1,0 +1,8 @@
+# Bzlmod module definition. Not yet published to the Bazel Central Registry
+# (BCR) - see the "Bazel" subsection of README.md's Installation section for
+# how to depend on this repo directly (git_override/local_path_override)
+# until it is.
+module(
+    name = "babybehave",
+    version = "0.7.19",
+)

@@ -1,0 +1,12 @@
+{
+  "name": "babybehave",
+  "version": "0.7.19",
+  "description": "A minimalistic, header-only BDD framework for modern C++.",
+  "homepage": "https://github.com/crsnplusplus/BabyBehave",
+  "license": "MIT",
+  "supports": "!uwp",
+  "dependencies": [
+    { "name": "vcpkg-cmake", "host": true },
+    { "name": "vcpkg-cmake-config", "host": true }
+  ]
+}
