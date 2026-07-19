@@ -98,9 +98,10 @@ if(COV_COMBINE AND _n_units GREATER 1)
 		endif()
 		file(STRINGS "${_unit_gcov}" _gcov_lines)
 		foreach(_gline IN LISTS _gcov_lines)
-			if(_gline MATCHES "^[ \t]*([^:]+):[ \t]*([0-9]+):")
+			if(_gline MATCHES "^[ \t]*([^:]+):[ \t]*([0-9]+):(.*)$")
 				set(_marker "${CMAKE_MATCH_1}")
 				set(_lineno "${CMAKE_MATCH_2}")
+				set(_srctext "${CMAKE_MATCH_3}")
 				if(_lineno STREQUAL "0")
 					continue()
 				endif()
@@ -111,6 +112,17 @@ if(COV_COMBINE AND _n_units GREATER 1)
 				if(_marker STREQUAL "-")
 					continue() # non-executable in this unit
 				elseif(_marker STREQUAL "#####" OR _marker STREQUAL "=====")
+					# gcov instruments a function's closing brace with its own
+					# "reached end of function" counter, separate from the return
+					# statement just above it -- a line that is only a brace
+					# (optionally followed by ';', e.g. a struct/namespace close)
+					# can never independently execute any logic of its own, so
+					# treat it like gcov's own "-" non-executable marker instead
+					# of a real coverage gap.
+					string(STRIP "${_srctext}" _srctext_stripped)
+					if(_srctext_stripped STREQUAL "}" OR _srctext_stripped STREQUAL "};")
+						continue()
+					endif()
 					list(FIND _uncovered_lines "${_lineno}" _already_uncovered)
 					if(_already_uncovered LESS 0)
 						list(APPEND _uncovered_lines "${_lineno}")
