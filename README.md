@@ -6,7 +6,7 @@
 
 A minimalistic, header-only BDD framework for modern C++.
 
-Write behavior-driven tests as plain C++ functions and compose them with a fluent `Given / With / When / Then` API. No dependencies, no code generation, no Gherkin files to parse — the test *is* the specification, and the readable output comes for free from your function names.
+Write behavior-driven tests as plain C++ functions and compose them with a fluent `Given / With / When / Then` API. No dependencies, no code generation — the test *is* the specification, and the readable output comes for free from your function names. Gherkin support (runtime `.feature` file interpreter) is included by default, but you are never *required* to use it: plain C++ functions are still the primary, zero-ceremony way to write specs. For pure C++17 builds or consumers who explicitly don't want Gherkin, define `BABYBEHAVE_DISABLE_GHERKIN` before including the header.
 
 ```text
 Given a: FreshlyBootedCoffeeMachine
@@ -249,6 +249,101 @@ Both also have single-`TestResult` convenience overloads, and both are pure: the
 
 Like `matchers.hpp`, this lives in its own header rather than in `bdd.hpp` (it `#include`s `"bdd.hpp"` itself, since it exists specifically to format `TestResult`/`StepResult`), so consumers who don't want it don't pay for it. It only makes sense for scenarios run under `SetCollectFailuresMode(true)`: in the default mode a failed step invokes the (by default `std::exit`-ing) failure callbacks before `Execute()` ever returns, so there is no complete `TestResult` to serialize in that case. Only feed it `TestResult`s from `SetCollectFailuresMode(true)` scenarios (a scenario that passed entirely still produces a valid, empty-but-meaningful `TestResult`). See [`examples/SelfTest.cpp`](examples/SelfTest.cpp), which accumulates results from its collect-failures-mode scenarios and writes both `selftest-results.xml` and `selftest-results.tap` at the end of `main()`.
 
+## Gherkin support (runtime interpreter, on by default)
+
+BabyBehave includes a runtime `.feature` file interpreter for teams that prefer Gherkin's structured syntax alongside BabyBehave's fluent C++ DSL. It is **on by default** but can be disabled via `BABYBEHAVE_DISABLE_GHERKIN` (see [below](#opting-out-of-gherkin) for when you might want to).
+
+### Basic usage
+
+```cpp
+#include <BabyBehave/bdd.hpp>
+
+using namespace BabyBehave::BDD;
+
+int main() {
+    Gherkin::StepRegistry registry;
+    
+    registry.RegisterGiven("an empty basket", [](TestContext& ctx) {
+        ctx.Set("basket", std::make_shared<Basket>());
+        return true;
+    });
+    registry.RegisterWhen("I add {int} apples", [](TestContext& ctx, int count) {
+        ctx.Get<std::shared_ptr<Basket>>("basket")->Add("apple", count);
+        return true;
+    });
+    registry.RegisterThen("the basket contains {int} items", [](TestContext& ctx, int expected) {
+        return ctx.Get<std::shared_ptr<Basket>>("basket")->Count() == expected;
+    });
+    
+    const auto feature = R"gherkin(
+        Feature: Shopping basket
+        
+        Scenario: Adding an item increases the count
+            Given an empty basket
+            When I add 3 apples
+            Then the basket contains 3 items
+    )gherkin";
+    
+    Gherkin::RunFeature(feature, registry, "Shopping basket");
+}
+```
+
+The interpreter supports:
+- **Feature labels and Scenarios** — organized test flows with readable names
+- **Background steps** — shared preconditions for multiple scenarios
+- **Step parameters** — `{int}`, `{float}`, `{string}`, `{word}` placeholders with automatic type conversion
+- **Tags** — `@tag` annotations for scenario filtering and hook registration
+- **Before/After hooks** — tag-scoped setup/teardown via `AddBeforeHook()`/`AddAfterHook()`
+- **Comments** — `# comments` in `.feature` files are parsed and ignored
+
+`RunFeature()` also takes an optional fourth `onFailure` parameter (`Gherkin::GherkinFailureCallback`, i.e. `std::function<void(std::string_view)>`) for redirecting Gherkin-sourced failures (a parse error or a failing Scenario) to your own handler instead of the library's default print-and-`exit(EXIT_FAILURE)` behavior:
+
+```cpp
+FeatureResult RunFeature(std::string_view featureText, StepRegistry& registry,
+                          std::string_view featureLabel = "<feature>",
+                          const GherkinFailureCallback& onFailure = impl::DefaultGherkinFailureAction);
+```
+
+A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/GherkinCustomFailureHandler.cpp) below.
+
+### Examples
+
+Ten complete, runnable Gherkin examples are included in [`examples/`](examples/):
+
+- **[`GherkinBasket.cpp`](examples/GherkinBasket.cpp)** — basic Given/When/Then and step-parameter placeholders
+- **[`GherkinBackground.cpp`](examples/GherkinBackground.cpp)** — shared Background steps across multiple scenarios
+- **[`GherkinTagsAndHooks.cpp`](examples/GherkinTagsAndHooks.cpp)** — tag-scoped `@tag` filters and Before/After hook registration
+- **[`GherkinUnmatchedStep.cpp`](examples/GherkinUnmatchedStep.cpp)** — demonstrating fail-hard behavior on unmatched steps
+- **[`GherkinCollectFailures.cpp`](examples/GherkinCollectFailures.cpp)** — forced collect-failures mode to gather all step outcomes
+- **[`GherkinPlaceholders.cpp`](examples/GherkinPlaceholders.cpp)** — all four placeholder types (`{int}`, `{float}`, `{string}`, `{word}`)
+- **[`GherkinMultiThreaded.cpp`](examples/GherkinMultiThreaded.cpp)** — concurrent `RunFeature()` calls per thread with independent registries
+- **[`GherkinAdvanced.cpp`](examples/GherkinAdvanced.cpp)** — combined realistic feature with multiple scenarios
+- **[`GherkinVeryAdvanced.cpp`](examples/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
+- **[`GherkinCustomFailureHandler.cpp`](examples/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
+
+### Opting out of Gherkin
+
+Gherkin support requires C++20 (specifically `<concepts>` and `<optional>`), while the rest of BabyBehave gracefully falls back to C++17. If you're targeting pure C++17 or simply don't need Gherkin, define `BABYBEHAVE_DISABLE_GHERKIN` **before** including the header:
+
+```cpp
+#define BABYBEHAVE_DISABLE_GHERKIN
+#include <BabyBehave/bdd.hpp>
+
+// BabyBehave::BDD::Gherkin is NOT defined; everything else works normally.
+// The C++20 includes are not pulled in either, so no compilation penalty.
+using namespace BabyBehave::BDD;
+
+// ... write tests using the fluent API as usual
+```
+
+### Full design rationale
+
+For design decisions, feature coverage rationale, and why only AND/subset tag matching in v0.8.0, see [`docs/design/gherkin-support.md`](docs/design/gherkin-support.md).
+
+## Configuration reference
+
+This library recognizes several compile-time `#define`s and runtime environment variables, including `BABYBEHAVE_DISABLE_GHERKIN`, `BABYBEHAVE_NO_SHORT_MACROS`, `BABYBEHAVE_QUIET` (env var), and `BABYBEHAVE_STYLE` (env var). For a comprehensive reference with examples, see [`docs/configuration.md`](docs/configuration.md).
+
 ## Running scenarios concurrently
 
 Each `BabyBehaveTest` (created by `Given`/`GivenA`) owns its `TestContext` as a private member — it's never shared between scenarios unless you go out of your way to pass one `TestContext&` into several of them. That means launching independent scenarios one-per-thread (e.g. via `std::async`) needs no locking at all: there is nothing for the threads to race on. `TestContext` itself is **not** thread-safe (it's backed by a plain `std::unordered_map` with no internal synchronization), so the one rule is: don't share a single `TestContext` across threads. See [`examples/MultiThreaded.cpp`](examples/MultiThreaded.cpp) for a complete, working example — including an `#if 0`-guarded, never-compiled sketch of the unsafe shared-`TestContext` pattern it deliberately avoids.
@@ -363,7 +458,9 @@ BabyBehave is genuinely header-only and has zero third-party dependencies, so th
 
 ## C++ standard support
 
-`bdd.hpp` targets C++23 but is written to gracefully degrade to C++17: it checks the relevant `<version>` feature-test macros and falls back to an equivalent, slightly less ergonomic standard library facility when a C++23 one isn't available:
+Most of `bdd.hpp` (fluent API, matchers, reporters) is C++17 compatible, with graceful C++23 enhancements where available. **The Gherkin block specifically requires C++20** (`<concepts>`, `<optional>`, modern regex semantics). Consumers targeting pure C++17 can disable Gherkin via `BABYBEHAVE_DISABLE_GHERKIN` (see [Opting out of Gherkin](#opting-out-of-gherkin) above).
+
+For the non-Gherkin parts, the header checks the relevant `<version>` feature-test macros and falls back when a C++23 facility isn't available:
 
 | Facility | C++23 | C++17 fallback | Guarded by |
 | --- | --- | --- | --- |
@@ -371,7 +468,7 @@ BabyBehave is genuinely header-only and has zero third-party dependencies, so th
 | Console output | `std::println` | `std::cout << ... << '\n'` | `__cpp_lib_print` |
 | Step/`Given` call-site capture (see [Call-site diagnostics](#call-site-diagnostics)) | `std::source_location` | unavailable — `StepResult::location` stays empty, no message suffix | `__cpp_lib_source_location` |
 
-So the header itself will still compile under `-std=c++17`. **Note:** the `BabyBehave::BabyBehave` CMake target declares `cxx_std_23` as a compile feature requirement (`src/CMakeLists.txt`), so consumers who link against that target are bumped to C++23 by CMake regardless. If you need to build under C++17, vendor/copy the header directly instead of linking the CMake target.
+So most of the header will still compile under `-std=c++17` (except the Gherkin block). **Note:** the `BabyBehave::BabyBehave` CMake target declares `cxx_std_23` as a compile feature requirement (`src/CMakeLists.txt`), so consumers who link against that target are bumped to C++23 by CMake regardless. If you need to build under C++17, vendor/copy the header directly instead of linking the CMake target (and optionally define `BABYBEHAVE_DISABLE_GHERKIN` if you want to be extra conservative).
 
 ## CMake options
 
@@ -388,6 +485,8 @@ cmake -B build -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cmake --build build --target coverage-report   # only if lcov/genhtml are installed
 ```
+
+(Gherkin is now on by default; there is no CMake option to gate it, since disabling it is a consumer's compile-time decision via `BABYBEHAVE_DISABLE_GHERKIN`.)
 
 With `BABYBEHAVE_ENABLE_COVERAGE=ON` and `gcov` available, two independent coverage measurements are also available as build targets:
 
@@ -415,7 +514,9 @@ See the [`examples/`](examples/) and [`tests/`](tests/) directories for working 
 ## Requirements
 
 - To build this project's own CMake targets (examples, tests, and anything linking `BabyBehave::BabyBehave`): a C++23 compiler
-- To just vendor/include `bdd.hpp` directly, outside of this project's CMake: a C++17 compiler is enough (see [C++ standard support](#c-standard-support))
+- To vendor/include `bdd.hpp` directly, outside of this project's CMake:
+  - **Default (with Gherkin enabled):** a C++20 compiler is required (for `<concepts>` and `<optional>`)
+  - **Pure C++17:** possible by defining `BABYBEHAVE_DISABLE_GHERKIN` before including (see [C++ standard support](#c-standard-support) and [Opting out of Gherkin](#opting-out-of-gherkin))
 - CMake 3.20+ only if you want to build the examples/tests, install the package, or use `find_package`; consuming the header directly requires nothing
 
 ## License
