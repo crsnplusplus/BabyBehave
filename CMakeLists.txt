@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(BabyBehave VERSION 0.7.19 LANGUAGES CXX)
+project(BabyBehave VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

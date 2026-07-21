@@ -3,17 +3,17 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-No version of BabyBehave has been tagged/released yet (`git tag` is empty
-aside from an unrelated `backup/main-before-author-rewrite` safety tag), so
-strictly speaking everything below is still pre-release. See the note at the
-bottom of the `[0.7.19]` section for how the two sections below relate to
-each other.
+This changelog treats `v0.9.0` as the project's first tagged release. As of
+this entry the `v0.9.0` git tag does not exist yet — `git tag` is still
+empty aside from an unrelated `backup/main-before-author-rewrite` safety
+tag — and it is created by hand, after the pull request carrying this
+changelog entry merges to `main`, not by any automation in this repository.
+Everything below the `[0.9.0]` section, including the entire `[0.7.19]`
+section further down, predates the adoption of git tagging for BabyBehave
+releases; see the note at the bottom of that `[0.7.19]` section for how it
+relates to `[0.9.0]`.
 
-## [Unreleased]
-
-Changes present in the working tree but not yet committed, on top of commit
-`583034e` ("Harden bdd.hpp and modernize to C++23 with C++17 fallback"),
-which is the current tip of `feature/harden-and-modernize`.
+## [0.9.0] - 2026-07-21
 
 ### Added
 
@@ -39,7 +39,8 @@ which is the current tip of `feature/harden-and-modernize`.
   failure callbacks; instead the outcome is recorded and execution continues
   with the remaining steps. Off by default, so existing consumers see
   byte-identical behavior. Exercised end-to-end by the new
-  `RunCollectFailuresModeScenario` in `examples/SelfTest.cpp`.
+  `RunCollectFailuresModeScenario` in the self-hosted suite described below
+  (`tests/bdd/test_SelfTest.cpp`).
 - CMake `install()`/`export()`/`find_package()` support: `BabyBehaveLib` is
   now an `INTERFACE` library aliased as `BabyBehave::BabyBehave`, exported as
   `BabyBehaveTargets`, with a generated `BabyBehaveConfig.cmake` (from the
@@ -48,24 +49,29 @@ which is the current tip of `feature/harden-and-modernize`.
   COMPATIBILITY SameMajorVersion ARCH_INDEPENDENT)`), installed under
   `<prefix>/lib/cmake/BabyBehave`. Downstream projects can now
   `find_package(BabyBehave REQUIRED)` after installing, in addition to the
-  existing `FetchContent`/`add_subdirectory` vendoring path. The project now
-  declares a version: `project(BabyBehave VERSION 0.7.19 LANGUAGES CXX)`
-  (previously unversioned) — see the versioning note below.
+  existing `FetchContent`/`add_subdirectory` vendoring path. The project
+  first declared a version with `project(BabyBehave VERSION 0.7.19
+  LANGUAGES CXX)` (previously unversioned) — see the versioning note below
+  and, further down in this section, the subsequent bump to `0.9.0`.
 - Split coverage targets `coverage-ut` and `coverage-bbh` (implemented in the
   new `cmake/coverage_report.cmake`, invoked from the root `CMakeLists.txt`
   when `BABYBEHAVE_ENABLE_COVERAGE` is on): two independent gcov
   measurements of `bdd.hpp`'s header-only inline code — one from the gtest
   unit test suite (`test_TestContext` + `test_BabyBehaveTest`), one from the
-  new self-hosted example below — replacing a single combined coverage
-  story.
-- `example_SelfTest` (`examples/SelfTest.cpp`): a self-hosted "dogfood"
-  example — BabyBehave testing BabyBehave through its own fluent API. Nine
-  scenarios drive the public surface (happy path; failed
-  precondition/action; thrown `std::exception` and non-`std::exception`
-  values; a throwing context-setup function; `TestContext` `Set`/`Get`
-  round-tripping through a `shared_ptr`; a missing-key throw both directly
-  and from inside a step; and the new collect-failures mode) and assert, via
-  plain C++ checks in `main()`, that the library behaved as documented.
+  self-hosted example below — replacing a single combined coverage story.
+- `test_bdd_SelfTest` (`tests/bdd/test_SelfTest.cpp`, registered with CTest
+  as the `SelfTest` test): a self-hosted "dogfood" example — BabyBehave
+  testing BabyBehave through its own fluent API. Nine scenarios drive the
+  public surface (happy path; failed precondition/action; thrown
+  `std::exception` and non-`std::exception` values; a throwing
+  context-setup function; `TestContext` `Set`/`Get` round-tripping through a
+  `shared_ptr`; a missing-key throw both directly and from inside a step;
+  and the collect-failures mode above) and assert, via plain C++ checks in
+  `main()`, that the library behaved as documented. (This example was
+  originally located directly under `examples/` and was later relocated
+  into `tests/bdd/`, gaining the `test_bdd_SelfTest` CMake target name, as
+  part of wiring the Gherkin runtime into the coverage gates further below
+  in this section.)
 - `examples/NoShortMacros.cpp`: a minimal example built with
   `BABYBEHAVE_NO_SHORT_MACROS` defined, using only `GivenAImpl`/`AddStep<>`.
 - `include/BabyBehave/matchers.hpp` (`BabyBehave::Matchers`): a small,
@@ -89,7 +95,7 @@ which is the current tip of `feature/harden-and-modernize`.
   Links `Threads::Threads` via `find_package(Threads REQUIRED)`.
 - `.github/workflows/ci.yml`: GitHub Actions CI, manually triggered
   (`workflow_dispatch` only — no automatic push/PR trigger, since a run can
-  push a badge-update commit back to `main`), with five jobs —
+  push a badge-update commit back to `main`), initially with five jobs —
   `build-and-test` (a `{ubuntu-gcc, ubuntu-clang, macos-clang}` matrix,
   Release build, `ctest`), `build-and-test-windows` (MSVC, its own job
   rather than a matrix cell since the multi-config VS generator needs
@@ -103,7 +109,14 @@ which is the current tip of `feature/harden-and-modernize`.
   counter that both README badges read via shields.io's `endpoint` badge
   type), and `sanitizers` (`BABYBEHAVE_ENABLE_SANITIZERS`, `ctest` plus
   running every example binary directly so ASan/UBSan can catch anything
-  the example binaries would otherwise hide).
+  the example binaries would otherwise hide). A sixth job, `gherkin`
+  (`gherkin (interpreter and examples)`), was added later, once the Gherkin
+  work below landed: it builds and `ctest`s the Release configuration and
+  then also runs every `example_Gherkin*` binary directly, tolerating
+  non-zero exit from the handful of examples (`example_GherkinUnmatchedStep`,
+  `example_GherkinCollectFailures`, `example_GherkinCustomFailureHandler`,
+  `example_GherkinBakeryLateCancellation`) that deliberately demonstrate a
+  failing path.
 - `.clang-tidy`: curated checks (`bugprone-*`, `performance-*`,
   `modernize-*`, `readability-*`, `cppcoreguidelines-*`, `clang-analyzer-*`)
   with six specific checks disabled, each with a documented rationale,
@@ -116,6 +129,66 @@ which is the current tip of `feature/harden-and-modernize`.
   (`conanfile.py`, `header-library` package type), and Bzlmod support
   (`MODULE.bazel` + `BUILD.bazel` exposing a `cc_library`, not yet
   published to the Bazel Central Registry).
+- Gherkin runtime interpreter support added directly to `bdd.hpp` (developed
+  internally as "v0.8.0"/"v0.8.1", never tagged as such — it lands here as
+  part of `[0.9.0]`): a runtime (not code-generating) interpreter for
+  Gherkin `.feature` text, gated behind `#if
+  !defined(BABYBEHAVE_DISABLE_GHERKIN)` and opt-out via the new
+  `BABYBEHAVE_DISABLE_GHERKIN` macro. Adds `StepRegistry` for registering
+  `Given`/`When`/`Then` step definitions and hooks, support for `Background:`
+  blocks (steps prepended to every `Scenario` in the `Feature`), `@tag`
+  annotations at the `Feature`/`Scenario` level, and tag-filtered
+  `AddBeforeHook`/`AddAfterHook` hooks run around each scenario. Step text
+  can capture typed arguments via a small cucumber-expression-like
+  placeholder syntax (`{int}`, `{float}`, `{string}`, `{word}`). `RunFeature`
+  takes a `GherkinFailureCallback` (`onFailure` parameter, default
+  `impl::DefaultGherkinFailureAction`, which prints to `stderr` and exits) as
+  its extensibility point for collecting rather than exiting on failures.
+  Ten new example programs exercise the interpreter (`GherkinAdvanced`,
+  `GherkinBackground`, `GherkinBasket`, `GherkinCollectFailures`,
+  `GherkinCustomFailureHandler`, `GherkinMultiThreaded`,
+  `GherkinPlaceholders`, `GherkinTagsAndHooks`, `GherkinUnmatchedStep`,
+  `GherkinVeryAdvanced`) alongside new design docs,
+  `docs/design/gherkin-support.md` and `docs/configuration.md` (the latter
+  also documenting the pre-existing `BABYBEHAVE_NO_SHORT_MACROS`,
+  `BABYBEHAVE_QUIET`, and `BABYBEHAVE_STYLE` knobs).
+- `StepRegistry::Merge(const StepRegistry& other)`, plus explicitly
+  defaulted copy/move construction and assignment on `StepRegistry` (it was
+  previously move-only in practice), so a base set of step definitions can
+  be composed with feature-specific additions instead of duplicated. Put to
+  use across fifteen new example programs and their accompanying `.feature`
+  files under the new `examples/gherkin/` directory, split across two
+  domains — bakery (`BakerySteps.hpp` shared across
+  `GherkinBakeryAllergenSubstitution`, `GherkinBakeryBulkOrderItemized`,
+  `GherkinBakeryConcurrentOrderProcessing`, `GherkinBakeryDailyOvenLifecycle`,
+  `GherkinBakeryFlakyOvenSensorRetry`, `GherkinBakeryLateCancellation`,
+  `GherkinBakerySeasonalDiscountTiers`, `GherkinBakeryStandardOrder`) and
+  library (`LibrarySteps.hpp` shared across
+  `GherkinLibraryBookReviewSubmission`, `GherkinLibraryConcurrentLending`,
+  `GherkinLibraryHoldPickupDeadline`, `GherkinLibraryHoldsAndReservations`,
+  `GherkinLibraryOverdueFines`, `GherkinLibraryPriorityPatronHandling`,
+  `GherkinLibraryStandardLending`) — including
+  `GherkinLibraryConcurrentLending`, which runs several scenarios sharing
+  one merged registry concurrently via `std::async`.
+- Gherkin language/runtime extensions beyond plain Gherkin, added alongside
+  the bakery/library examples above: `Scenario Outline`/`Examples:` (and the
+  `Scenarios:` alias) blocks, expanding `<placeholder>` substitutions across
+  however many `Examples:`/`Scenarios:` blocks are declared, in declaration
+  order; Data Tables and Doc Strings as opt-in step parameters (a step
+  function can declare a trailing `const DataTable&` and/or `const
+  std::string&` parameter to receive a pipe-delimited table or a
+  `"""`-delimited doc string attached to that step); `@timeout:<value><unit>`
+  (`s`/`ms`/`m`) tags enforcing a cooperative, non-preemptive wall-clock
+  deadline checked between steps (`After` hooks still run on timeout);
+  `@retry:N` tags automatically re-running a scenario up to `N` times with a
+  fresh `TestContext` per attempt, reporting only the final outcome; boolean
+  tag expressions (`and`/`or`/`not`, with parentheses) for hook
+  registration via the new `AddBeforeHookExpr`/`AddAfterHookExpr`; an
+  `enableParallelScenarios` flag on `RunFeature` to run a `Feature`'s
+  `Scenario`s concurrently via `std::async` while still reporting results in
+  declaration order (requires a non-exiting `onFailure` callback); and
+  suite-level `AddBeforeAllHook`/`AddAfterAllHook`, run exactly once per
+  `Feature` regardless of tags.
 
 ### Changed
 
@@ -123,17 +196,74 @@ which is the current tip of `feature/harden-and-modernize`.
   target instead of manually adding
   `target_include_directories(... "${CMAKE_CURRENT_SOURCE_DIR}/../include")`
   in every `add_executable` block.
+- The project version — `project(BabyBehave VERSION ...)` in the root
+  `CMakeLists.txt`, and the matching version strings in `conanfile.py`,
+  `MODULE.bazel`, and `ports/babybehave/vcpkg.json` — was bumped from
+  `0.7.19` to `0.9.0` so all packaging manifests agree with this being the
+  project's first tagged release (see the preamble at the top of this file
+  and the versioning note at the bottom of the `[0.7.19]` section below).
+- Seven of the ten Gherkin example programs added above
+  (`GherkinAdvanced`, `GherkinCollectFailures`, `GherkinCustomFailureHandler`,
+  `GherkinMultiThreaded`, `GherkinPlaceholders`, `GherkinUnmatchedStep`,
+  `GherkinVeryAdvanced`) moved into the new `examples/gherkin/` directory
+  alongside the bakery/library examples; `GherkinBackground`,
+  `GherkinBasket`, and `GherkinTagsAndHooks` stayed in `examples/`.
+- Every Gherkin example's `main()` was retrofitted to a consistent
+  `PrepareRegistry()` (builds and returns a `StepRegistry`) /
+  `RunFeatureFromFile(...)` (loads and runs the `.feature` file against
+  that registry) convention, separating registry construction from feature
+  execution instead of interleaving them inline in `main()`.
+- The `tests/bdd/test_SelfTest_Gherkin.cpp` and
+  `tests/bdd/test_SelfTest_Gherkin_DefaultFailureExit.cpp` suites were wired
+  into the `coverage-ut`/`coverage-bbh` gates above — the Gherkin runtime in
+  `bdd.hpp` had previously been invisible to those coverage measurements.
+  Combined with the `ParseNarrationStyleEnv()` fix below, this took
+  `coverage-bbh`/`coverage-ut` to 100% at that checkpoint; the subsequent
+  Scenario Outline/Data Table/Doc String/`@timeout`/`@retry`/tag-expression/
+  parallel-scenario/suite-hook code added above brought `bdd.hpp`'s measured
+  coverage back down to 98.47%/98.45% (`coverage-bbh`/`coverage-ut`) simply
+  because that much new code shipped after the 100% checkpoint was reached,
+  not because of a regression in already-covered code.
+- Build output directories were consolidated under
+  `build/{bb-release,coverage,clang-tidy,bb-debug}/` (previously a plain
+  `build/` plus an ad hoc `build-cov/` and other one-off directories),
+  updated consistently across `scripts/build.sh`, `scripts/coverage.sh`, all
+  six CI jobs above, `README.md`, and `docs/configuration.md`; `.gitignore`
+  was simplified to match.
+- `README.md`'s remaining references to the self-hosted example's old
+  location under `examples/` were updated to point at
+  `tests/bdd/test_SelfTest.cpp`.
 
-No fixes in this unreleased batch — the Postcondition-message and
-`cmake_minimum_required` bug fixes were already made in the prior commit;
-see `[0.7.19]` below.
+### Fixed
+
+- `JoinNarrationLines()` in `bdd.hpp` no longer rebuilds the narration
+  string from scratch for every appended line; it accumulates directly into
+  a single `std::string` via `+=`, turning an O(n²) join into a linear one.
+- `cmake/coverage_report.cmake` no longer counts a source line that
+  consists solely of a closing brace (`}` or `};`) as an uncovered-line
+  coverage gap — gcov instruments a function's closing brace with its own
+  "reached end of function" counter, separate from the statement above it,
+  so a brace-only line can never independently execute any logic of its own
+  and is now treated like gcov's own `-` (non-executable) marker.
+- Closed a coverage gap in `bdd.hpp`'s `ParseNarrationStyleEnv()` by adding
+  test variants for `BABYBEHAVE_STYLE=arrow`, `=tree`, and an invalid
+  (`bogus`) value, exercising the fallback-to-plain branch that was
+  previously untested.
+- Stale references in `README.md` to the self-hosted example's old
+  `examples/`-based location were corrected to `tests/bdd/test_SelfTest.cpp`
+  (see Changed above); a similar stale reference survives in a comment in
+  `include/BabyBehave/reporters.hpp` and is left for a follow-up pass.
+
+The Postcondition-mislabeled-as-Precondition error message and the obsolete
+`cmake_minimum_required(VERSION 3.0)` bug fixes predate this section and are
+already documented under `[0.7.19]` below.
 
 ## [0.7.19] — pre-changelog history (not yet tagged)
 
 This project has no git tags for actual releases, so this section is a
 brief retrospective derived from `git log --oneline`, covering everything
 up to and including commit `583034e`, i.e. everything *not* listed under
-`[Unreleased]` above. It predates the adoption of this changelog, so it's
+`[0.9.0]` above. It predates the adoption of this changelog, so it's
 kept intentionally short rather than itemized like a real changelog entry.
 
 - **Initial skeleton and examples**: project scaffolding, the original
@@ -168,14 +298,17 @@ kept intentionally short rather than itemized like a real changelog entry.
   (ASan+UBSan), scoped only to this project's own targets.
 
 **On the version number**: `project(BabyBehave VERSION ...)` was introduced
-(in the `[Unreleased]` work above) unversioned-turned-`0.1.0` at first, since
+(in the `[0.9.0]` work above) unversioned-turned-`0.1.0` at first, since
 nothing had been tagged before and `0.1.0` is the conventional SemVer
 starting point (major version 0 signals "the public API may still change").
 That placeholder was superseded by an explicit decision to start the
 project's official versioning at `0.7.19` instead — every packaging
 manifest (`CMakeLists.txt`, `conanfile.py`, `MODULE.bazel`,
 `ports/babybehave/vcpkg.json`) was updated to match, still pre-`v0.7.19`-tag
-at the time of this entry.
+at the time of this entry. `0.7.19` itself was later superseded in turn by
+a further decision to skip straight to tagging `v0.9.0` as the project's
+first release instead of `v0.7.19`; see the version-bump entry under
+`[0.9.0]`'s Changed section above for that follow-up.
 
 ---
 
