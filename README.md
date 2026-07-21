@@ -130,7 +130,7 @@ test.SetOnExceptionCallback([](const std::string& step, const std::exception& e)
 });
 ```
 
-Exceptions are contained at every boundary: a throw from context setup, from any step, or even from your own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` is caught and never allowed to propagate out of `BabyBehaveTest`'s destructor (which is where scenario execution actually happens). Non-`std::exception` throws (e.g. `throw 42;`) are caught too and reported with a generic message instead of crashing the process. [`examples/SelfTest.cpp`](examples/SelfTest.cpp) exercises every one of these paths directly — see [Self-hosted dogfood example](#self-hosted-dogfood-example) below.
+Exceptions are contained at every boundary: a throw from context setup, from any step, or even from your own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` is caught and never allowed to propagate out of `BabyBehaveTest`'s destructor (which is where scenario execution actually happens). Non-`std::exception` throws (e.g. `throw 42;`) are caught too and reported with a generic message instead of crashing the process. [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp) exercises every one of these paths directly — see [Self-hosted dogfood example](#self-hosted-dogfood-example) below.
 
 ### Call-site diagnostics
 
@@ -143,9 +143,9 @@ On toolchains without `<source_location>`, `location` is always the empty string
 
 ### Self-hosted dogfood example
 
-[`examples/SelfTest.cpp`](examples/SelfTest.cpp) is BabyBehave testing BabyBehave, using its own `Given`/`With`/`When`/`Then` API to drive scenarios and check that the library behaves the way its contract promises (happy path, failed preconditions/actions, thrown `std::exception`s, thrown non-`std::exception` values, context-setup exceptions, `TestContext` round-tripping, collect-failures mode, and `SoftCheck`).
+[`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp) is BabyBehave testing BabyBehave, using its own `Given`/`With`/`When`/`Then` API to drive scenarios and check that the library behaves the way its contract promises (happy path, failed preconditions/actions, thrown `std::exception`s, thrown non-`std::exception` values, context-setup exceptions, `TestContext` round-tripping, collect-failures mode, and `SoftCheck`).
 
-Because the default failure callbacks call `std::exit()`, and `BabyBehaveTest::Execute()` runs from the destructor, `SelfTest.cpp` installs its own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` on every scenario to *record* the outcome instead of exiting, then inspects what was recorded once each scenario's `BabyBehaveTest` goes out of scope. This is the same pattern you'd use to embed BabyBehave scenarios inside your own test harness (gtest, Catch2, a CI script, …) instead of letting a failure kill the whole process.
+Because the default failure callbacks call `std::exit()`, and `BabyBehaveTest::Execute()` runs from the destructor, `test_SelfTest.cpp` installs its own `SetOnConditionNotVerifiedCallback`/`SetOnExceptionCallback` on every scenario to *record* the outcome instead of exiting, then inspects what was recorded once each scenario's `BabyBehaveTest` goes out of scope. This is the same pattern you'd use to embed BabyBehave scenarios inside your own test harness (gtest, Catch2, a CI script, …) instead of letting a failure kill the whole process.
 
 ## Collecting results instead of exiting
 
@@ -182,7 +182,7 @@ const TestResult& result = test.Execute();
 // order, including the ones that passed (test's destructor is now a no-op).
 ```
 
-(adapted from `RunCollectFailuresModeScenario` in [`examples/SelfTest.cpp`](examples/SelfTest.cpp); `GetResult()` returns the same `TestResult` without re-running anything, for inspecting it again later.)
+(adapted from `RunCollectFailuresModeScenario` in [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp); `GetResult()` returns the same `TestResult` without re-running anything, for inspecting it again later.)
 
 Off by default, so a consumer who never calls `SetCollectFailuresMode(true)` sees byte-identical behavior to before this feature existed.
 
@@ -201,7 +201,7 @@ bool StepActionWithSoftChecks(TestContext& context) {
 }
 ```
 
-`Check(label, condition, message = "")` records one named sub-check and returns `condition` unchanged (handy for early-return patterns); `AllPassed()` is the AND of every `Check()` call made so far (`true` if `Check()` was never called, so a step that only conditionally checks is unaffected). If the step's overall `bool` comes back `false` **and** at least one sub-check failed, the failure message is extended with the failing sub-checks — for the snippet above, that's `"Action failed: count in range (count was 15)"`. Passing sub-checks are omitted from the message; only the failing ones are useful. This applies both to the default failure-callback path and to `SetCollectFailuresMode(true)`'s `StepResult::message` — see [`examples/SelfTest.cpp`](examples/SelfTest.cpp)'s `RunSoftCheckCollectFailuresScenario`/`RunSoftCheckDefaultCallbackScenario` for both. A step that never constructs a `SoftCheck` is completely unaffected — this is purely additive.
+`Check(label, condition, message = "")` records one named sub-check and returns `condition` unchanged (handy for early-return patterns); `AllPassed()` is the AND of every `Check()` call made so far (`true` if `Check()` was never called, so a step that only conditionally checks is unaffected). If the step's overall `bool` comes back `false` **and** at least one sub-check failed, the failure message is extended with the failing sub-checks — for the snippet above, that's `"Action failed: count in range (count was 15)"`. Passing sub-checks are omitted from the message; only the failing ones are useful. This applies both to the default failure-callback path and to `SetCollectFailuresMode(true)`'s `StepResult::message` — see [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp)'s `RunSoftCheckCollectFailuresScenario`/`RunSoftCheckDefaultCallbackScenario` for both. A step that never constructs a `SoftCheck` is completely unaffected — this is purely additive.
 
 `condition` is a plain, eagerly-evaluated `bool`, so `SoftCheck::Check` composes with raw comparisons or with `BabyBehave::Matchers::Expect(...).ToXxx(...)` (see [Fluent matchers](#fluent-matchers) below) exactly as well as with anything else — `SoftCheck` only adds naming/grouping on top.
 
@@ -247,7 +247,7 @@ std::cout << BabyBehave::BDD::Reporters::ToTap(results) << '\n';
 
 Both also have single-`TestResult` convenience overloads, and both are pure: they format and return a `std::string`, with no file I/O of their own — it's up to the caller to print it or write it wherever CI expects it.
 
-Like `matchers.hpp`, this lives in its own header rather than in `bdd.hpp` (it `#include`s `"bdd.hpp"` itself, since it exists specifically to format `TestResult`/`StepResult`), so consumers who don't want it don't pay for it. It only makes sense for scenarios run under `SetCollectFailuresMode(true)`: in the default mode a failed step invokes the (by default `std::exit`-ing) failure callbacks before `Execute()` ever returns, so there is no complete `TestResult` to serialize in that case. Only feed it `TestResult`s from `SetCollectFailuresMode(true)` scenarios (a scenario that passed entirely still produces a valid, empty-but-meaningful `TestResult`). See [`examples/SelfTest.cpp`](examples/SelfTest.cpp), which accumulates results from its collect-failures-mode scenarios and writes both `selftest-results.xml` and `selftest-results.tap` at the end of `main()`.
+Like `matchers.hpp`, this lives in its own header rather than in `bdd.hpp` (it `#include`s `"bdd.hpp"` itself, since it exists specifically to format `TestResult`/`StepResult`), so consumers who don't want it don't pay for it. It only makes sense for scenarios run under `SetCollectFailuresMode(true)`: in the default mode a failed step invokes the (by default `std::exit`-ing) failure callbacks before `Execute()` ever returns, so there is no complete `TestResult` to serialize in that case. Only feed it `TestResult`s from `SetCollectFailuresMode(true)` scenarios (a scenario that passed entirely still produces a valid, empty-but-meaningful `TestResult`). See [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp), which accumulates results from its collect-failures-mode scenarios and writes both `selftest-results.xml` and `selftest-results.tap` at the end of `main()`.
 
 ## Gherkin support (runtime interpreter, on by default)
 
@@ -294,32 +294,59 @@ The interpreter supports:
 - **Step parameters** — `{int}`, `{float}`, `{string}`, `{word}` placeholders with automatic type conversion
 - **Tags** — `@tag` annotations for scenario filtering and hook registration
 - **Before/After hooks** — tag-scoped setup/teardown via `AddBeforeHook()`/`AddAfterHook()`
+- **Suite-level Before/After-all hooks** — one-time setup/teardown across all Scenarios in a Feature via `AddBeforeAllHook()`/`AddAfterAllHook()`; Before-ALL runs once before any Scenario, After-ALL runs once after all Scenarios (guaranteed only with a custom non-exiting `onFailure` callback)
+- **Tag expressions (AND/OR/NOT)** — boolean tag-matching expressions for conditional hooks via `AddBeforeHookExpr()`/`AddAfterHookExpr()`; supports `and`/`or`/`not` keywords with parentheses for grouping
 - **Comments** — `# comments` in `.feature` files are parsed and ignored
+- **Timeout annotations** — `@timeout:<value><unit>` tags for scenario-level deadline checking (cooperative inter-step only, no preemptive interruption)
+- **Scenario Outline / Examples** — data-driven scenario expansion with `<placeholder>` tokens in step text and pipe-delimited `Examples:` tables
+- **Data Tables** — tabular arguments to steps with header-aware cell lookups, opt-in via trailing `const DataTable&` parameter
+- **Doc Strings** — multi-line string arguments to steps (triple-quote-delimited blocks), passed as `const std::string&` parameters with smart indentation stripping
+- **Parallel scenario execution** — concurrent scenario runs within a Feature via `RunFeature(..., onFailure, enableParallelScenarios=true)` with a custom non-exiting failure callback
+- **Retry/flaky annotations** — `@retry:N` tags for automatic re-attempts on scenario failure (N total attempts, not extra retries), stopping at the first success; every attempt is a full, independent re-run of Before hooks/Background/Steps/After hooks
 
 `RunFeature()` also takes an optional fourth `onFailure` parameter (`Gherkin::GherkinFailureCallback`, i.e. `std::function<void(std::string_view)>`) for redirecting Gherkin-sourced failures (a parse error or a failing Scenario) to your own handler instead of the library's default print-and-`exit(EXIT_FAILURE)` behavior:
 
 ```cpp
 FeatureResult RunFeature(std::string_view featureText, StepRegistry& registry,
                           std::string_view featureLabel = "<feature>",
-                          const GherkinFailureCallback& onFailure = impl::DefaultGherkinFailureAction);
+                          const GherkinFailureCallback& onFailure = impl::DefaultGherkinFailureAction,
+                          bool enableParallelScenarios = false);
 ```
 
-A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/GherkinCustomFailureHandler.cpp) below.
+A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp) below.
 
 ### Examples
 
-Ten complete, runnable Gherkin examples are included in [`examples/`](examples/):
+Three core Gherkin examples live directly in [`examples/`](examples/); the rest (including two multi-file registry-reuse demos) live in [`examples/gherkin/`](examples/gherkin/):
 
 - **[`GherkinBasket.cpp`](examples/GherkinBasket.cpp)** — basic Given/When/Then and step-parameter placeholders
 - **[`GherkinBackground.cpp`](examples/GherkinBackground.cpp)** — shared Background steps across multiple scenarios
 - **[`GherkinTagsAndHooks.cpp`](examples/GherkinTagsAndHooks.cpp)** — tag-scoped `@tag` filters and Before/After hook registration
-- **[`GherkinUnmatchedStep.cpp`](examples/GherkinUnmatchedStep.cpp)** — demonstrating fail-hard behavior on unmatched steps
-- **[`GherkinCollectFailures.cpp`](examples/GherkinCollectFailures.cpp)** — forced collect-failures mode to gather all step outcomes
-- **[`GherkinPlaceholders.cpp`](examples/GherkinPlaceholders.cpp)** — all four placeholder types (`{int}`, `{float}`, `{string}`, `{word}`)
-- **[`GherkinMultiThreaded.cpp`](examples/GherkinMultiThreaded.cpp)** — concurrent `RunFeature()` calls per thread with independent registries
-- **[`GherkinAdvanced.cpp`](examples/GherkinAdvanced.cpp)** — combined realistic feature with multiple scenarios
-- **[`GherkinVeryAdvanced.cpp`](examples/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
-- **[`GherkinCustomFailureHandler.cpp`](examples/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
+- **[`gherkin/GherkinUnmatchedStep.cpp`](examples/gherkin/GherkinUnmatchedStep.cpp)** — demonstrating fail-hard behavior on unmatched steps
+- **[`gherkin/GherkinCollectFailures.cpp`](examples/gherkin/GherkinCollectFailures.cpp)** — forced collect-failures mode to gather all step outcomes
+- **[`gherkin/GherkinPlaceholders.cpp`](examples/gherkin/GherkinPlaceholders.cpp)** — all four placeholder types (`{int}`, `{float}`, `{string}`, `{word}`)
+- **[`gherkin/GherkinMultiThreaded.cpp`](examples/gherkin/GherkinMultiThreaded.cpp)** — concurrent `RunFeature()` calls per thread with independent registries
+- **[`gherkin/GherkinAdvanced.cpp`](examples/gherkin/GherkinAdvanced.cpp)** — combined realistic feature with multiple scenarios
+- **[`gherkin/GherkinVeryAdvanced.cpp`](examples/gherkin/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
+- **[`gherkin/GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
+
+**Bakery/Library domain examples** — [`gherkin/BakerySteps.hpp`](examples/gherkin/BakerySteps.hpp) and [`gherkin/LibrarySteps.hpp`](examples/gherkin/LibrarySteps.hpp) are shared step-definition libraries reused via `StepRegistry::Merge()` across most (not all — a few below build their own standalone registry instead) of the example files in each domain, each with genuinely different scenarios (reading their `.feature` text from real files under [`gherkin/features/`](examples/gherkin/features/), not embedded strings):
+
+- **[`gherkin/GherkinBakeryStandardOrder.cpp`](examples/gherkin/GherkinBakeryStandardOrder.cpp)** — standard cake order paid in full
+- **[`gherkin/GherkinBakeryAllergenSubstitution.cpp`](examples/gherkin/GherkinBakeryAllergenSubstitution.cpp)** — allergen substitution surcharge, plus `Merge()` for a file-specific step
+- **[`gherkin/GherkinBakerySeasonalDiscountTiers.cpp`](examples/gherkin/GherkinBakerySeasonalDiscountTiers.cpp)** — loyalty tier discounts using Scenario Outline with Examples table
+- **[`gherkin/GherkinBakeryBulkOrderItemized.cpp`](examples/gherkin/GherkinBakeryBulkOrderItemized.cpp)** — bulk order with itemized line items as a Data Table, computing an order total
+- **[`gherkin/GherkinBakeryLateCancellation.cpp`](examples/gherkin/GherkinBakeryLateCancellation.cpp)** — late cancellation forfeits the deposit (intentionally exits non-zero)
+- **[`gherkin/GherkinBakeryConcurrentOrderProcessing.cpp`](examples/gherkin/GherkinBakeryConcurrentOrderProcessing.cpp)** — concurrent customer order processing with `enableParallelScenarios=true` and a custom collecting `onFailure` callback
+- **[`gherkin/GherkinBakeryFlakyOvenSensorRetry.cpp`](examples/gherkin/GherkinBakeryFlakyOvenSensorRetry.cpp)** — flaky oven temperature sensor tolerated via `@retry:3`, deterministically failing its first two read attempts before succeeding on the third
+- **[`gherkin/GherkinBakeryDailyOvenLifecycle.cpp`](examples/gherkin/GherkinBakeryDailyOvenLifecycle.cpp)** — daily oven preheating and cooldown via Before-ALL and After-ALL hooks, with 3 baking scenarios
+- **[`gherkin/GherkinLibraryStandardLending.cpp`](examples/gherkin/GherkinLibraryStandardLending.cpp)** — checkout and on-time return
+- **[`gherkin/GherkinLibraryHoldsAndReservations.cpp`](examples/gherkin/GherkinLibraryHoldsAndReservations.cpp)** — hold queue fulfillment, plus `Merge()` for a file-specific step
+- **[`gherkin/GherkinLibraryOverdueFines.cpp`](examples/gherkin/GherkinLibraryOverdueFines.cpp)** — overdue fine calculation
+- **[`gherkin/GherkinLibraryConcurrentLending.cpp`](examples/gherkin/GherkinLibraryConcurrentLending.cpp)** — one shared `StepRegistry`, built once, fanned out across four threads each running `RunFeature()` against a different branch's `.feature` file concurrently
+- **[`gherkin/GherkinLibraryHoldPickupDeadline.cpp`](examples/gherkin/GherkinLibraryHoldPickupDeadline.cpp)** — service-level deadline with `@timeout:2s` annotation and fast realistic steps
+- **[`gherkin/GherkinLibraryBookReviewSubmission.cpp`](examples/gherkin/GherkinLibraryBookReviewSubmission.cpp)** — multi-paragraph book review as a Doc String, with word count validation and substring search
+- **[`gherkin/GherkinLibraryPriorityPatronHandling.cpp`](examples/gherkin/GherkinLibraryPriorityPatronHandling.cpp)** — VIP and urgent patron expedited service using tag expressions with `AddBeforeHookExpr("@vip or @urgent", ...)`
 
 ### Opting out of Gherkin
 
@@ -476,14 +503,14 @@ Two opt-in options are available when configuring the project itself (not needed
 
 ```bash
 # AddressSanitizer + UndefinedBehaviorSanitizer
-cmake -B build -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -B build/bb-debug -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/bb-debug
+ctest --test-dir build/bb-debug --output-on-failure
 
 # gcov-based code coverage (also builds an HTML `coverage-report` target if lcov + genhtml are found)
-cmake -B build -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-cmake --build build --target coverage-report   # only if lcov/genhtml are installed
+cmake -B build/coverage -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/coverage
+cmake --build build/coverage --target coverage-report   # only if lcov/genhtml are installed
 ```
 
 (Gherkin is now on by default; there is no CMake option to gate it, since disabling it is a consumer's compile-time decision via `BABYBEHAVE_DISABLE_GHERKIN`.)
@@ -491,11 +518,11 @@ cmake --build build --target coverage-report   # only if lcov/genhtml are instal
 With `BABYBEHAVE_ENABLE_COVERAGE=ON` and `gcov` available, two independent coverage measurements are also available as build targets:
 
 ```bash
-cmake --build build --target coverage-ut coverage-bbh
+cmake --build build/coverage --target coverage-ut coverage-bbh
 ```
 
 - **`coverage-ut`** — coverage of `bdd.hpp` as exercised by the gtest unit test suite in [`tests/`](tests/).
-- **`coverage-bbh`** — coverage of `bdd.hpp` as exercised by the self-hosted [`examples/SelfTest.cpp`](examples/SelfTest.cpp) dogfood example.
+- **`coverage-bbh`** — coverage of `bdd.hpp` as exercised by the self-hosted [`tests/bdd/test_SelfTest.cpp`](tests/bdd/test_SelfTest.cpp) dogfood tests.
 
 There are two separate targets, not one, because `bdd.hpp` is header-only and template-heavy: every binary that includes it compiles and instruments its own private copy of its inline code, with its own `.gcno`/`.gcda` pair. Keeping the two measurements' object directories separate keeps the reports naturally isolated from each other.
 
@@ -504,9 +531,9 @@ There are two separate targets, not one, because `bdd.hpp` is header-only and te
 ```bash
 git clone https://github.com/crsnplusplus/BabyBehave.git
 cd BabyBehave
-cmake -B build
-cmake --build build
-ctest --test-dir build
+cmake -B build/bb-release
+cmake --build build/bb-release
+ctest --test-dir build/bb-release
 ```
 
 See the [`examples/`](examples/) and [`tests/`](tests/) directories for working scenarios.

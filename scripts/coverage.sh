@@ -14,8 +14,8 @@
 # every scenario by default, not just mismatches; pass --diagnostics=mismatch
 # for the old terse "[OK]"/"[FAIL]"-per-scenario behavior instead.
 #
-# Uses its own build directory (build-cov) so it never disturbs a plain
-# scripts/build.sh build.
+# Uses its own build directory (build/coverage) so it never disturbs a
+# plain scripts/build.sh build (build/bb-release).
 
 set -euo pipefail
 
@@ -35,7 +35,7 @@ for arg in "$@"; do
 done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="${repo_root}/build-cov"
+build_dir="${repo_root}/build/coverage"
 
 cmake -S "${repo_root}" -B "${build_dir}" -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build "${build_dir}" -j"$(nproc)"

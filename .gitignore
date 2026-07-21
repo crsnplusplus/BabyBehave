@@ -31,8 +31,8 @@
 *.out
 *.app
 
-build/*
-build-cov/*
+build/
+Testing/
 
 # direnv local environment (project-specific gh account config path)
 .envrc
@@ -41,3 +41,9 @@ build-cov/*
 .claude/
 CLAUDE.md
 AGENTS.md
+
+.quattroagents
+.mcp.json
+.agent-factory/
+.codex/
+.agents/

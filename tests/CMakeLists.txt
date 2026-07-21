@@ -6,6 +6,16 @@ set(CMAKE_CXX_STANDARD 23)
 
 enable_testing()
 
+# Needed by the Gherkin test binaries below (test_Gherkin_Parser/
+# test_Gherkin_Integration, and their tests/bdd counterparts) now that
+# RunFeature()'s enableParallelScenarios=true path (bdd.hpp) dispatches
+# Scenarios via std::async(std::launch::async, ...). Mirrors the same
+# find_package(Threads REQUIRED) already done in examples/CMakeLists.txt for
+# its own threaded examples. On toolchains where pthread symbols are merged
+# into libc (e.g. glibc >= 2.34) this is close to a no-op, but it is a real,
+# platform-dependent link error to skip it elsewhere.
+find_package(Threads REQUIRED)
+
 include(FetchContent)
 FetchContent_Declare(
   googletest
@@ -68,11 +78,11 @@ add_test(BabyBehaveTestNoSourceLocation test_BabyBehaveTest_NoSourceLocation)
 # isolation reasons as every other file in this list (test_Gherkin_Integration
 # in particular contains EXPECT_EXIT death tests).
 add_executable(test_Gherkin_Parser test_Gherkin_Parser.cpp)
-target_link_libraries(test_Gherkin_Parser BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
+target_link_libraries(test_Gherkin_Parser BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags Threads::Threads)
 add_test(GherkinParser test_Gherkin_Parser)
 
 add_executable(test_Gherkin_Integration test_Gherkin_Integration.cpp)
-target_link_libraries(test_Gherkin_Integration BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
+target_link_libraries(test_Gherkin_Integration BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags Threads::Threads)
 add_test(GherkinIntegration test_Gherkin_Integration)
 
 add_subdirectory(bdd)

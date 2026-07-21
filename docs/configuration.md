@@ -109,7 +109,7 @@ Controls whether step narration (the human-readable output describing what each 
 BABYBEHAVE_QUIET=1 ./my_test_binary
 
 # Or set it for ctest
-ctest --test-dir build -E ".*" -DBABYBEHAVE_QUIET=1
+ctest --test-dir build/bb-release -E ".*" -DBABYBEHAVE_QUIET=1
 ```
 
 **Example (CMake `set_tests_properties`):**

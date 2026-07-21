@@ -55,13 +55,13 @@ jobs:
         run: ${{ matrix.cxx }} --version
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build/bb-release -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build/bb-release -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build/bb-release --output-on-failure
 
   build-and-test-windows:
     name: build-and-test (windows-msvc)
@@ -75,13 +75,13 @@ jobs:
         # generator on windows-latest is a multi-config Visual Studio
         # generator (MSVC is auto-detected), which picks its build type via
         # --config at build/test time instead of CMAKE_BUILD_TYPE.
-        run: cmake -B build
+        run: cmake -B build/bb-release
 
       - name: Build
-        run: cmake --build build --config Release -j
+        run: cmake --build build/bb-release --config Release -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -C Release
+        run: ctest --test-dir build/bb-release --output-on-failure -C Release
 
   clang-tidy:
     name: clang-tidy
@@ -94,7 +94,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang-tidy
 
       - name: Configure (compile_commands.json, clang)
-        run: cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -B build/clang-tidy -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug
 
       - name: Run clang-tidy on BabyBehave's headers
         # .clang-tidy at the repo root (picked up automatically) sets
@@ -102,7 +102,7 @@ jobs:
         # three shipped headers are linted, not tests/examples/vendored
         # googletest.
         run: >
-          clang-tidy -p build
+          clang-tidy -p build/clang-tidy
           include/BabyBehave/bdd.hpp
           include/BabyBehave/matchers.hpp
           include/BabyBehave/reporters.hpp
@@ -120,19 +120,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -B build -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -B build/coverage -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build/coverage -j
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build/coverage --output-on-failure
 
       - name: bdd.hpp coverage from the gtest unit test suite (coverage-ut)
-        run: cmake --build build --target coverage-ut
+        run: cmake --build build/coverage --target coverage-ut
 
       - name: bdd.hpp coverage from the self-hosted BabyBehave example (coverage-bbh)
-        run: cmake --build build --target coverage-bbh
+        run: cmake --build build/coverage --target coverage-bbh
 
       - name: Upload coverage reports
         # Uploaded even if the gate step below fails, so a coverage
@@ -142,12 +142,12 @@ jobs:
         with:
           name: coverage-reports
           path: |
-            build/coverage-ut.txt
-            build/coverage-bbh.txt
+            build/coverage/coverage-ut.txt
+            build/coverage/coverage-bbh.txt
           if-no-files-found: error
 
       - name: Enforce bdd.hpp coverage >= 90% (UT and BBH)
-        run: cmake --build build --target coverage-gate
+        run: cmake --build build/coverage --target coverage-gate
 
       - name: Compute coverage badge data
         # Runs regardless of the gate result above (a red badge on a real
@@ -165,12 +165,12 @@ jobs:
         # than writing a garbage badge in that case.
         if: always() && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
         run: |
-          if [ ! -f build/coverage-ut.txt ] || [ ! -f build/coverage-bbh.txt ]; then
+          if [ ! -f build/coverage/coverage-ut.txt ] || [ ! -f build/coverage/coverage-bbh.txt ]; then
             echo "coverage-ut.txt/coverage-bbh.txt missing (an earlier step failed before producing them); skipping badge update."
             exit 0
           fi
-          UT_PCT=$(grep -A2 "combined (true per-line union" build/coverage-ut.txt | grep -oP 'Lines executed:\K[0-9]+\.[0-9]+')
-          BBH_PCT=$(grep -A2 "combined (true per-line union" build/coverage-bbh.txt | grep -oP 'Lines executed:\K[0-9]+\.[0-9]+')
+          UT_PCT=$(grep -A2 "combined (true per-line union" build/coverage/coverage-ut.txt | grep -oP 'Lines executed:\K[0-9]+\.[0-9]+')
+          BBH_PCT=$(grep -A2 "combined (true per-line union" build/coverage/coverage-bbh.txt | grep -oP 'Lines executed:\K[0-9]+\.[0-9]+')
           if [ -z "$UT_PCT" ] || [ -z "$BBH_PCT" ]; then
             echo "Could not parse a combined percentage from the coverage reports; skipping badge update."
             exit 0
@@ -215,30 +215,35 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build/bb-release -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build/bb-release -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build/bb-release --output-on-failure
 
       - name: Run Gherkin example binaries
-        # The Gherkin example binaries (examples/example_Gherkin*.cpp) are built and
-        # should run to completion without assertion failures. They are
-        # ctest-registered, so the Test step above exercises them, but running
-        # them again here directly verifies no additional binary issues under
-        # the Gherkin path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
-        # and example_GherkinCustomFailureHandler are deliberate "demonstrate
-        # failure/collect-all-steps" demos (they intentionally exit non-zero);
-        # every other example is expected to exit cleanly.
+        # The Gherkin example binaries (examples/example_Gherkin*.cpp and
+        # examples/gherkin/example_Gherkin*.cpp) are built and should run to
+        # completion without assertion failures. They are ctest-registered,
+        # so the Test step above exercises them, but running them again here
+        # directly verifies no additional binary issues under the Gherkin
+        # path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
+        # example_GherkinCustomFailureHandler, and
+        # example_GherkinBakeryLateCancellation are deliberate "demonstrate a
+        # realistic failure path" demos (they intentionally exit non-zero -
+        # the last one shows a genuine failing business-rule assertion,
+        # cancelling a custom cake order inside the deposit-forfeiture grace
+        # period, reusing the shared BakerySteps.hpp registry); every other
+        # example is expected to exit cleanly.
         run: |
           set -e
-          for exe in build/examples/example_Gherkin*; do
+          for exe in build/bb-release/examples/example_Gherkin*; do
             [ -x "$exe" ] || continue
             name=$(basename "$exe")
             echo "--- running $name ---"
-            if [ "$name" = "example_GherkinUnmatchedStep" ] || [ "$name" = "example_GherkinCollectFailures" ] || [ "$name" = "example_GherkinCustomFailureHandler" ]; then
+            if [ "$name" = "example_GherkinUnmatchedStep" ] || [ "$name" = "example_GherkinCollectFailures" ] || [ "$name" = "example_GherkinCustomFailureHandler" ] || [ "$name" = "example_GherkinBakeryLateCancellation" ]; then
               "$exe" || true
             else
               "$exe"
@@ -253,13 +258,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -B build -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -B build/bb-debug -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build/bb-debug -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build/bb-debug --output-on-failure
 
       - name: Run example binaries under sanitizers
         # The example binaries aren't ctest-registered, so run them directly
@@ -268,7 +273,7 @@ jobs:
         # non-zero); every other example is expected to exit cleanly.
         run: |
           set -e
-          for exe in build/examples/example_*; do
+          for exe in build/bb-debug/examples/example_*; do
             [ -x "$exe" ] || continue
             name=$(basename "$exe")
             echo "--- running $name ---"

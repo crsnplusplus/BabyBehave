@@ -158,12 +158,25 @@ if(BABYBEHAVE_ENABLE_COVERAGE)
 		set(_bbt6_obj "${_bbt6_objdir}/test_BabyBehaveTest_NoSourceLocation.cpp.o")
 		set(_bbt6_gcda "${_bbt6_objdir}/test_BabyBehaveTest_NoSourceLocation.cpp.gcda")
 
+		# Gherkin interpreter gtest suites (BabyBehave::BDD::Gherkin - see
+		# tests/CMakeLists.txt's own comment on these two targets). Own
+		# object directories, same as every other unit above; included here
+		# (v0.9.0 Phase 0) so bdd.hpp's Gherkin namespace - previously
+		# entirely absent from coverage-ut's measured line set, since no UT
+		# unit instantiated it - is actually counted.
+		set(_gp_objdir "${CMAKE_BINARY_DIR}/tests/CMakeFiles/test_Gherkin_Parser.dir")
+		set(_gp_obj "${_gp_objdir}/test_Gherkin_Parser.cpp.o")
+		set(_gp_gcda "${_gp_objdir}/test_Gherkin_Parser.cpp.gcda")
+		set(_gi_objdir "${CMAKE_BINARY_DIR}/tests/CMakeFiles/test_Gherkin_Integration.dir")
+		set(_gi_obj "${_gi_objdir}/test_Gherkin_Integration.cpp.o")
+		set(_gi_gcda "${_gi_objdir}/test_Gherkin_Integration.cpp.gcda")
+
 		# BABYBEHAVE_QUIET=1: these are the gtest-based UT binaries (see
 		# tests/CMakeLists.txt's set_tests_properties() for the ctest-side
 		# equivalent) - their step narration otherwise interleaves with
 		# gtest's own "[ RUN ]"/"[ OK ]" output.
 		add_custom_target(coverage-ut
-			COMMAND ${CMAKE_COMMAND} -E rm -f "${_tc_gcda}" "${_bbt_gcda}" "${_bbt2_gcda}" "${_bbt3_gcda}" "${_bbt4_gcda}" "${_bbt5_gcda}" "${_bbt6_gcda}"
+			COMMAND ${CMAKE_COMMAND} -E rm -f "${_tc_gcda}" "${_bbt_gcda}" "${_bbt2_gcda}" "${_bbt3_gcda}" "${_bbt4_gcda}" "${_bbt5_gcda}" "${_bbt6_gcda}" "${_gp_gcda}" "${_gi_gcda}"
 			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_TestContext> || true"
 			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest> || true"
 			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_StepTypes> || true"
@@ -171,15 +184,17 @@ if(BABYBEHAVE_ENABLE_COVERAGE)
 			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_SoftCheckAndCollectFailures> || true"
 			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_CallbacksAndDeathTests> || true"
 			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_BabyBehaveTest_NoSourceLocation> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_Gherkin_Parser> || true"
+			COMMAND sh -c "BABYBEHAVE_QUIET=1 $<TARGET_FILE:test_Gherkin_Integration> || true"
 			COMMAND ${CMAKE_COMMAND}
 				-DCOV_LABEL=UT
 				-DCOV_OUTFILE=${CMAKE_BINARY_DIR}/coverage-ut.txt
 				-DCOV_WORKDIR=${CMAKE_BINARY_DIR}/coverage-ut
 				-DCOV_GCOV=${GCOV_PATH}
 				-DCOV_COMBINE=ON
-				"-DCOV_UNITS=test_TestContext|${_tc_objdir}|${_tc_obj};test_BabyBehaveTest|${_bbt_objdir}|${_bbt_obj};test_BabyBehaveTest_StepTypes|${_bbt2_objdir}|${_bbt2_obj};test_BabyBehaveTest_Exceptions|${_bbt3_objdir}|${_bbt3_obj};test_BabyBehaveTest_SoftCheckAndCollectFailures|${_bbt4_objdir}|${_bbt4_obj};test_BabyBehaveTest_CallbacksAndDeathTests|${_bbt5_objdir}|${_bbt5_obj};test_BabyBehaveTest_NoSourceLocation|${_bbt6_objdir}|${_bbt6_obj}"
+				"-DCOV_UNITS=test_TestContext|${_tc_objdir}|${_tc_obj};test_BabyBehaveTest|${_bbt_objdir}|${_bbt_obj};test_BabyBehaveTest_StepTypes|${_bbt2_objdir}|${_bbt2_obj};test_BabyBehaveTest_Exceptions|${_bbt3_objdir}|${_bbt3_obj};test_BabyBehaveTest_SoftCheckAndCollectFailures|${_bbt4_objdir}|${_bbt4_obj};test_BabyBehaveTest_CallbacksAndDeathTests|${_bbt5_objdir}|${_bbt5_obj};test_BabyBehaveTest_NoSourceLocation|${_bbt6_objdir}|${_bbt6_obj};test_Gherkin_Parser|${_gp_objdir}|${_gp_obj};test_Gherkin_Integration|${_gi_objdir}|${_gi_obj}"
 				-P "${_babybehave_coverage_script}"
-			DEPENDS test_TestContext test_BabyBehaveTest test_BabyBehaveTest_StepTypes test_BabyBehaveTest_Exceptions test_BabyBehaveTest_SoftCheckAndCollectFailures test_BabyBehaveTest_CallbacksAndDeathTests test_BabyBehaveTest_NoSourceLocation
+			DEPENDS test_TestContext test_BabyBehaveTest test_BabyBehaveTest_StepTypes test_BabyBehaveTest_Exceptions test_BabyBehaveTest_SoftCheckAndCollectFailures test_BabyBehaveTest_CallbacksAndDeathTests test_BabyBehaveTest_NoSourceLocation test_Gherkin_Parser test_Gherkin_Integration
 			WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 			COMMENT "Measuring bdd.hpp coverage from the gtest unit test suite (UT)"
 			VERBATIM
@@ -212,22 +227,43 @@ if(BABYBEHAVE_ENABLE_COVERAGE)
 		set(_st5_obj "${_st5_objdir}/test_SelfTest_NoSourceLocation.cpp.o")
 		set(_st5_gcda "${_st5_objdir}/test_SelfTest_NoSourceLocation.cpp.gcda")
 
+		# Gherkin self-hosted probes (v0.9.0 Phase 0) - same per-TU
+		# object-directory isolation as every unit above, applied to
+		# BabyBehave::BDD::Gherkin (StepRegistry + RunFeature) instead of the
+		# non-Gherkin fluent API. test_bdd_SelfTest_Gherkin_DefaultFailureExit
+		# gets the same "|| true" treatment as the two Default*Exit units
+		# above, for the same reason: it installs no custom
+		# GherkinFailureCallback, so RunFeature()'s genuine default
+		# (print + std::exit) fires for real.
+		set(_stg_objdir "${CMAKE_BINARY_DIR}/tests/bdd/CMakeFiles/test_bdd_SelfTest_Gherkin.dir")
+		set(_stg_obj "${_stg_objdir}/test_SelfTest_Gherkin.cpp.o")
+		set(_stg_gcda "${_stg_objdir}/test_SelfTest_Gherkin.cpp.gcda")
+
+		set(_stg2_objdir "${CMAKE_BINARY_DIR}/tests/bdd/CMakeFiles/test_bdd_SelfTest_Gherkin_DefaultFailureExit.dir")
+		set(_stg2_obj "${_stg2_objdir}/test_SelfTest_Gherkin_DefaultFailureExit.cpp.o")
+		set(_stg2_gcda "${_stg2_objdir}/test_SelfTest_Gherkin_DefaultFailureExit.cpp.gcda")
+
 		add_custom_target(coverage-bbh
-			COMMAND ${CMAKE_COMMAND} -E rm -f "${_st_gcda}" "${_st2_gcda}" "${_st3_gcda}" "${_st4_gcda}" "${_st5_gcda}"
+			COMMAND ${CMAKE_COMMAND} -E rm -f "${_st_gcda}" "${_st2_gcda}" "${_st3_gcda}" "${_st4_gcda}" "${_st5_gcda}" "${_stg_gcda}" "${_stg2_gcda}"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest> || true"
+			COMMAND sh -c "BABYBEHAVE_STYLE=arrow $<TARGET_FILE:test_bdd_SelfTest> || true"
+			COMMAND sh -c "BABYBEHAVE_STYLE=tree $<TARGET_FILE:test_bdd_SelfTest> || true"
+			COMMAND sh -c "BABYBEHAVE_STYLE=bogus $<TARGET_FILE:test_bdd_SelfTest> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_ExceptionCoverage> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_DefaultConditionExit> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_DefaultExceptionExit> || true"
 			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_NoSourceLocation> || true"
+			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_Gherkin> || true"
+			COMMAND sh -c "$<TARGET_FILE:test_bdd_SelfTest_Gherkin_DefaultFailureExit> || true"
 			COMMAND ${CMAKE_COMMAND}
 				-DCOV_LABEL=BBH
 				-DCOV_OUTFILE=${CMAKE_BINARY_DIR}/coverage-bbh.txt
 				-DCOV_WORKDIR=${CMAKE_BINARY_DIR}/coverage-bbh
 				-DCOV_GCOV=${GCOV_PATH}
 				-DCOV_COMBINE=ON
-				"-DCOV_UNITS=test_bdd_SelfTest|${_st_objdir}|${_st_obj};test_bdd_SelfTest_ExceptionCoverage|${_st2_objdir}|${_st2_obj};test_bdd_SelfTest_DefaultConditionExit|${_st3_objdir}|${_st3_obj};test_bdd_SelfTest_DefaultExceptionExit|${_st4_objdir}|${_st4_obj};test_bdd_SelfTest_NoSourceLocation|${_st5_objdir}|${_st5_obj}"
+				"-DCOV_UNITS=test_bdd_SelfTest|${_st_objdir}|${_st_obj};test_bdd_SelfTest_ExceptionCoverage|${_st2_objdir}|${_st2_obj};test_bdd_SelfTest_DefaultConditionExit|${_st3_objdir}|${_st3_obj};test_bdd_SelfTest_DefaultExceptionExit|${_st4_objdir}|${_st4_obj};test_bdd_SelfTest_NoSourceLocation|${_st5_objdir}|${_st5_obj};test_bdd_SelfTest_Gherkin|${_stg_objdir}|${_stg_obj};test_bdd_SelfTest_Gherkin_DefaultFailureExit|${_stg2_objdir}|${_stg2_obj}"
 				-P "${_babybehave_coverage_script}"
-			DEPENDS test_bdd_SelfTest test_bdd_SelfTest_ExceptionCoverage test_bdd_SelfTest_DefaultConditionExit test_bdd_SelfTest_DefaultExceptionExit test_bdd_SelfTest_NoSourceLocation
+			DEPENDS test_bdd_SelfTest test_bdd_SelfTest_ExceptionCoverage test_bdd_SelfTest_DefaultConditionExit test_bdd_SelfTest_DefaultExceptionExit test_bdd_SelfTest_NoSourceLocation test_bdd_SelfTest_Gherkin test_bdd_SelfTest_Gherkin_DefaultFailureExit
 			WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 			COMMENT "Measuring bdd.hpp coverage from the self-hosted BabyBehave self-test suite (BBH)"
 			VERBATIM
