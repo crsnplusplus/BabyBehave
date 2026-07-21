@@ -294,14 +294,23 @@ The interpreter supports:
 - **Step parameters** — `{int}`, `{float}`, `{string}`, `{word}` placeholders with automatic type conversion
 - **Tags** — `@tag` annotations for scenario filtering and hook registration
 - **Before/After hooks** — tag-scoped setup/teardown via `AddBeforeHook()`/`AddAfterHook()`
+- **Suite-level Before/After-all hooks** — one-time setup/teardown across all Scenarios in a Feature via `AddBeforeAllHook()`/`AddAfterAllHook()`; Before-ALL runs once before any Scenario, After-ALL runs once after all Scenarios (guaranteed only with a custom non-exiting `onFailure` callback)
+- **Tag expressions (AND/OR/NOT)** — boolean tag-matching expressions for conditional hooks via `AddBeforeHookExpr()`/`AddAfterHookExpr()`; supports `and`/`or`/`not` keywords with parentheses for grouping
 - **Comments** — `# comments` in `.feature` files are parsed and ignored
+- **Timeout annotations** — `@timeout:<value><unit>` tags for scenario-level deadline checking (cooperative inter-step only, no preemptive interruption)
+- **Scenario Outline / Examples** — data-driven scenario expansion with `<placeholder>` tokens in step text and pipe-delimited `Examples:` tables
+- **Data Tables** — tabular arguments to steps with header-aware cell lookups, opt-in via trailing `const DataTable&` parameter
+- **Doc Strings** — multi-line string arguments to steps (triple-quote-delimited blocks), passed as `const std::string&` parameters with smart indentation stripping
+- **Parallel scenario execution** — concurrent scenario runs within a Feature via `RunFeature(..., onFailure, enableParallelScenarios=true)` with a custom non-exiting failure callback
+- **Retry/flaky annotations** — `@retry:N` tags for automatic re-attempts on scenario failure (N total attempts, not extra retries), stopping at the first success; every attempt is a full, independent re-run of Before hooks/Background/Steps/After hooks
 
 `RunFeature()` also takes an optional fourth `onFailure` parameter (`Gherkin::GherkinFailureCallback`, i.e. `std::function<void(std::string_view)>`) for redirecting Gherkin-sourced failures (a parse error or a failing Scenario) to your own handler instead of the library's default print-and-`exit(EXIT_FAILURE)` behavior:
 
 ```cpp
 FeatureResult RunFeature(std::string_view featureText, StepRegistry& registry,
                           std::string_view featureLabel = "<feature>",
-                          const GherkinFailureCallback& onFailure = impl::DefaultGherkinFailureAction);
+                          const GherkinFailureCallback& onFailure = impl::DefaultGherkinFailureAction,
+                          bool enableParallelScenarios = false);
 ```
 
 A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp) below.
@@ -321,15 +330,23 @@ Three core Gherkin examples live directly in [`examples/`](examples/); the rest 
 - **[`gherkin/GherkinVeryAdvanced.cpp`](examples/gherkin/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
 - **[`gherkin/GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
 
-**Registry reuse (`StepRegistry::Merge()`)** — [`gherkin/BakerySteps.hpp`](examples/gherkin/BakerySteps.hpp) and [`gherkin/LibrarySteps.hpp`](examples/gherkin/LibrarySteps.hpp) are shared step-definition libraries, each reused unmodified across three example files with genuinely different scenarios (reading their `.feature` text from real files under [`gherkin/features/`](examples/gherkin/features/), not embedded strings):
+**Bakery/Library domain examples** — [`gherkin/BakerySteps.hpp`](examples/gherkin/BakerySteps.hpp) and [`gherkin/LibrarySteps.hpp`](examples/gherkin/LibrarySteps.hpp) are shared step-definition libraries reused via `StepRegistry::Merge()` across most (not all — a few below build their own standalone registry instead) of the example files in each domain, each with genuinely different scenarios (reading their `.feature` text from real files under [`gherkin/features/`](examples/gherkin/features/), not embedded strings):
 
 - **[`gherkin/GherkinBakeryStandardOrder.cpp`](examples/gherkin/GherkinBakeryStandardOrder.cpp)** — standard cake order paid in full
 - **[`gherkin/GherkinBakeryAllergenSubstitution.cpp`](examples/gherkin/GherkinBakeryAllergenSubstitution.cpp)** — allergen substitution surcharge, plus `Merge()` for a file-specific step
+- **[`gherkin/GherkinBakerySeasonalDiscountTiers.cpp`](examples/gherkin/GherkinBakerySeasonalDiscountTiers.cpp)** — loyalty tier discounts using Scenario Outline with Examples table
+- **[`gherkin/GherkinBakeryBulkOrderItemized.cpp`](examples/gherkin/GherkinBakeryBulkOrderItemized.cpp)** — bulk order with itemized line items as a Data Table, computing an order total
 - **[`gherkin/GherkinBakeryLateCancellation.cpp`](examples/gherkin/GherkinBakeryLateCancellation.cpp)** — late cancellation forfeits the deposit (intentionally exits non-zero)
+- **[`gherkin/GherkinBakeryConcurrentOrderProcessing.cpp`](examples/gherkin/GherkinBakeryConcurrentOrderProcessing.cpp)** — concurrent customer order processing with `enableParallelScenarios=true` and a custom collecting `onFailure` callback
+- **[`gherkin/GherkinBakeryFlakyOvenSensorRetry.cpp`](examples/gherkin/GherkinBakeryFlakyOvenSensorRetry.cpp)** — flaky oven temperature sensor tolerated via `@retry:3`, deterministically failing its first two read attempts before succeeding on the third
+- **[`gherkin/GherkinBakeryDailyOvenLifecycle.cpp`](examples/gherkin/GherkinBakeryDailyOvenLifecycle.cpp)** — daily oven preheating and cooldown via Before-ALL and After-ALL hooks, with 3 baking scenarios
 - **[`gherkin/GherkinLibraryStandardLending.cpp`](examples/gherkin/GherkinLibraryStandardLending.cpp)** — checkout and on-time return
 - **[`gherkin/GherkinLibraryHoldsAndReservations.cpp`](examples/gherkin/GherkinLibraryHoldsAndReservations.cpp)** — hold queue fulfillment, plus `Merge()` for a file-specific step
 - **[`gherkin/GherkinLibraryOverdueFines.cpp`](examples/gherkin/GherkinLibraryOverdueFines.cpp)** — overdue fine calculation
 - **[`gherkin/GherkinLibraryConcurrentLending.cpp`](examples/gherkin/GherkinLibraryConcurrentLending.cpp)** — one shared `StepRegistry`, built once, fanned out across four threads each running `RunFeature()` against a different branch's `.feature` file concurrently
+- **[`gherkin/GherkinLibraryHoldPickupDeadline.cpp`](examples/gherkin/GherkinLibraryHoldPickupDeadline.cpp)** — service-level deadline with `@timeout:2s` annotation and fast realistic steps
+- **[`gherkin/GherkinLibraryBookReviewSubmission.cpp`](examples/gherkin/GherkinLibraryBookReviewSubmission.cpp)** — multi-paragraph book review as a Doc String, with word count validation and substring search
+- **[`gherkin/GherkinLibraryPriorityPatronHandling.cpp`](examples/gherkin/GherkinLibraryPriorityPatronHandling.cpp)** — VIP and urgent patron expedited service using tag expressions with `AddBeforeHookExpr("@vip or @urgent", ...)`
 
 ### Opting out of Gherkin
 

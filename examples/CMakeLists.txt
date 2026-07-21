@@ -85,6 +85,14 @@ add_executable(example_GherkinBakeryLateCancellation gherkin/GherkinBakeryLateCa
 target_link_libraries(example_GherkinBakeryLateCancellation PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
 target_compile_definitions(example_GherkinBakeryLateCancellation PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
 
+add_executable(example_GherkinBakerySeasonalDiscountTiers gherkin/GherkinBakerySeasonalDiscountTiers.cpp)
+target_link_libraries(example_GherkinBakerySeasonalDiscountTiers PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinBakerySeasonalDiscountTiers PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+add_executable(example_GherkinBakeryBulkOrderItemized gherkin/GherkinBakeryBulkOrderItemized.cpp)
+target_link_libraries(example_GherkinBakeryBulkOrderItemized PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinBakeryBulkOrderItemized PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
 add_executable(example_GherkinLibraryStandardLending gherkin/GherkinLibraryStandardLending.cpp)
 target_link_libraries(example_GherkinLibraryStandardLending PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
 target_compile_definitions(example_GherkinLibraryStandardLending PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
@@ -97,6 +105,18 @@ add_executable(example_GherkinLibraryOverdueFines gherkin/GherkinLibraryOverdueF
 target_link_libraries(example_GherkinLibraryOverdueFines PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
 target_compile_definitions(example_GherkinLibraryOverdueFines PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
 
+add_executable(example_GherkinLibraryHoldPickupDeadline gherkin/GherkinLibraryHoldPickupDeadline.cpp)
+target_link_libraries(example_GherkinLibraryHoldPickupDeadline PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinLibraryHoldPickupDeadline PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+add_executable(example_GherkinLibraryBookReviewSubmission gherkin/GherkinLibraryBookReviewSubmission.cpp)
+target_link_libraries(example_GherkinLibraryBookReviewSubmission PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinLibraryBookReviewSubmission PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+add_executable(example_GherkinBakeryFlakyOvenSensorRetry gherkin/GherkinBakeryFlakyOvenSensorRetry.cpp)
+target_link_libraries(example_GherkinBakeryFlakyOvenSensorRetry PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinBakeryFlakyOvenSensorRetry PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
 # One StepRegistry, built once, fanned out to N threads (std::async) each
 # running RunFeature() against a different .feature file concurrently -
 # contrast with example_GherkinMultiThreaded, where every thread builds its
@@ -105,3 +125,29 @@ target_compile_definitions(example_GherkinLibraryOverdueFines PRIVATE BABYBEHAVE
 add_executable(example_GherkinLibraryConcurrentLending gherkin/GherkinLibraryConcurrentLending.cpp)
 target_link_libraries(example_GherkinLibraryConcurrentLending PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags Threads::Threads)
 target_compile_definitions(example_GherkinLibraryConcurrentLending PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+# ONE RunFeature() call on ONE feature file containing MULTIPLE independent
+# scenarios, internally parallelized by passing enableParallelScenarios=true.
+# Each scenario is dispatched to its own std::async task but results are
+# always returned in declaration order. Contrast with example_GherkinMultiThreaded
+# and example_GherkinLibraryConcurrentLending, which use consumer-orchestrated
+# parallelism (multiple RunFeature() calls, each on its own thread).
+# Requires Threads::Threads for internal std::async dispatch.
+add_executable(example_GherkinBakeryConcurrentOrderProcessing gherkin/GherkinBakeryConcurrentOrderProcessing.cpp)
+target_link_libraries(example_GherkinBakeryConcurrentOrderProcessing PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags Threads::Threads)
+target_compile_definitions(example_GherkinBakeryConcurrentOrderProcessing PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+# Tag expression example (Feature 7): demonstrates AddBeforeHookExpr() with
+# boolean expressions (@vip or @urgent) to selectively fire hooks based on
+# tag combinations, as an alternative to the vector-based AddBeforeHook().
+add_executable(example_GherkinLibraryPriorityPatronHandling gherkin/GherkinLibraryPriorityPatronHandling.cpp)
+target_link_libraries(example_GherkinLibraryPriorityPatronHandling PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinLibraryPriorityPatronHandling PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+# Suite-level Before/After hook example (Feature 8): demonstrates
+# AddBeforeAllHook() and AddAfterAllHook() to run setup/teardown exactly
+# once for the entire feature, regardless of scenario count. The oven
+# preheats before ANY scenario, and cools down after ALL scenarios finish.
+add_executable(example_GherkinBakeryDailyOvenLifecycle gherkin/GherkinBakeryDailyOvenLifecycle.cpp)
+target_link_libraries(example_GherkinBakeryDailyOvenLifecycle PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinBakeryDailyOvenLifecycle PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")

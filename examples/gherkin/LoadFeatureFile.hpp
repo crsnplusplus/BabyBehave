@@ -1,6 +1,7 @@
 #ifndef BABYBEHAVE_EXAMPLES_GHERKIN_LOAD_FEATURE_FILE_HPP
 #define BABYBEHAVE_EXAMPLES_GHERKIN_LOAD_FEATURE_FILE_HPP
 
+#include <BabyBehave/bdd.hpp>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -35,6 +36,18 @@ inline std::string LoadFeatureFile(const std::string& filename) {
     std::ostringstream contents;
     contents << file.rdbuf();
     return contents.str();
+}
+
+// Helper to reduce boilerplate in example files that use the two-function convention
+// (PrepareRegistry() + main()). Collapses LoadFeatureFile() + label construction +
+// RunFeature() + exit-code logic into a single call.
+// Returns 0 if all scenarios passed, 1 otherwise.
+inline int RunFeatureFromFile(BabyBehave::BDD::Gherkin::StepRegistry registry,
+                             const std::string& featureFileName) {
+    const std::string feature = LoadFeatureFile(featureFileName);
+    const std::string label = std::string("examples/gherkin/features/") + featureFileName;
+    const auto result = BabyBehave::BDD::Gherkin::RunFeature(feature, registry, label);
+    return result.allPassed ? 0 : 1;
 }
 
 #endif // BABYBEHAVE_EXAMPLES_GHERKIN_LOAD_FEATURE_FILE_HPP

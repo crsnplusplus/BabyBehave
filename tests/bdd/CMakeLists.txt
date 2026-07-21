@@ -58,8 +58,15 @@ set_tests_properties(SelfTestNarrationStyleBogus PROPERTIES ENVIRONMENT "BABYBEH
 # separate bdd.hpp coverage source from the gtest-based UT half in
 # tests/test_Gherkin_Parser.cpp / tests/test_Gherkin_Integration.cpp (see
 # coverage-bbh in the root CMakeLists.txt).
+# Needed now that RunFeature()'s enableParallelScenarios=true path (bdd.hpp)
+# dispatches Scenarios via std::async(std::launch::async, ...) - both
+# executables below include bdd.hpp's Gherkin support and call RunFeature().
+# See tests/CMakeLists.txt for the matching rationale on its own
+# find_package(Threads REQUIRED) call.
+find_package(Threads REQUIRED)
+
 add_executable(test_bdd_SelfTest_Gherkin test_SelfTest_Gherkin.cpp)
-target_link_libraries(test_bdd_SelfTest_Gherkin PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_link_libraries(test_bdd_SelfTest_Gherkin PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags Threads::Threads)
 add_test(NAME SelfTestGherkin COMMAND test_bdd_SelfTest_Gherkin)
 
 # Same rationale as test_bdd_SelfTest_DefaultConditionExit/
@@ -68,6 +75,6 @@ add_test(NAME SelfTestGherkin COMMAND test_bdd_SelfTest_Gherkin)
 # custom callback installed, so the real print+exit default fires and the
 # process is EXPECTED to exit non-zero.
 add_executable(test_bdd_SelfTest_Gherkin_DefaultFailureExit test_SelfTest_Gherkin_DefaultFailureExit.cpp)
-target_link_libraries(test_bdd_SelfTest_Gherkin_DefaultFailureExit PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_link_libraries(test_bdd_SelfTest_Gherkin_DefaultFailureExit PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags Threads::Threads)
 add_test(NAME SelfTestGherkinDefaultFailureExit COMMAND test_bdd_SelfTest_Gherkin_DefaultFailureExit)
 set_tests_properties(SelfTestGherkinDefaultFailureExit PROPERTIES WILL_FAIL TRUE)
