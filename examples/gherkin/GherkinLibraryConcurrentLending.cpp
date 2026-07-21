@@ -33,6 +33,10 @@
 
 namespace {
 
+StepRegistry PrepareRegistry() {
+    return MakeLibraryStepRegistry();
+}
+
 FeatureResult RunBranchScenario(StepRegistry& registry, const GherkinFailureCallback& onFailure, int branchId) {
     const std::string featureFile = "concurrent_branch_" + std::to_string(branchId) + ".feature";
     const std::string featureText = LoadFeatureFile(featureFile);
@@ -43,7 +47,7 @@ FeatureResult RunBranchScenario(StepRegistry& registry, const GherkinFailureCall
 
 int main() {
     // Built once; every thread below only reads from it.
-    StepRegistry registry = MakeLibraryStepRegistry();
+    StepRegistry registry = PrepareRegistry();
 
     // Mutex-guarded, non-exiting: safe to invoke from any of the branch
     // threads, unlike the default onFailure callback (see comment above).

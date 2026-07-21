@@ -11,11 +11,11 @@
 // library_standard_lending.feature, read from disk via LoadFeatureFile()
 // - see GherkinBakeryStandardOrder.cpp's comment for why.
 
+StepRegistry PrepareRegistry() {
+    return MakeLibraryStepRegistry();
+}
+
 int main() {
-    StepRegistry registry = MakeLibraryStepRegistry();
-
-    const std::string feature = LoadFeatureFile("library_standard_lending.feature");
-
-    const auto result = RunFeature(feature, registry, "examples/gherkin/features/library_standard_lending.feature");
-    return result.allPassed ? 0 : 1;
+    StepRegistry registry = PrepareRegistry();
+    return RunFeatureFromFile(registry, "library_standard_lending.feature");
 }

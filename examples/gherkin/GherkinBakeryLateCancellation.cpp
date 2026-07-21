@@ -15,14 +15,15 @@
 // bakery_late_cancellation.feature, read from disk via LoadFeatureFile()
 // - see GherkinBakeryStandardOrder.cpp's comment for why.
 
-int main() {
+StepRegistry PrepareRegistry() {
     StepRegistry registry = MakeBakeryStepRegistry();
+    return registry;
+}
 
-    const std::string feature = LoadFeatureFile("bakery_late_cancellation.feature");
-
+int main() {
     // Intentionally expected to fail: "the deposit should be refunded" is
     // false whenever the deposit was forfeited, so this scenario's last
-    // step fails and RunFeature() exits with a non-zero status.
-    const auto result = RunFeature(feature, registry, "examples/gherkin/features/bakery_late_cancellation.feature");
-    return result.allPassed ? 0 : 1;
+    // step fails and RunFeatureFromFile() returns 1.
+    auto registry = PrepareRegistry();
+    return RunFeatureFromFile(registry, "bakery_late_cancellation.feature");
 }

@@ -13,11 +13,12 @@
 // string literal - RunFeature() is unaware of the difference either way,
 // since it only ever sees the resulting std::string_view.
 
-int main() {
+StepRegistry PrepareRegistry() {
     StepRegistry registry = MakeBakeryStepRegistry();
+    return registry;
+}
 
-    const std::string feature = LoadFeatureFile("bakery_standard_order.feature");
-
-    const auto result = RunFeature(feature, registry, "examples/gherkin/features/bakery_standard_order.feature");
-    return result.allPassed ? 0 : 1;
+int main() {
+    auto registry = PrepareRegistry();
+    return RunFeatureFromFile(registry, "bakery_standard_order.feature");
 }

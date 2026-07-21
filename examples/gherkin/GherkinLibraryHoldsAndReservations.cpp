@@ -11,7 +11,7 @@
 // library_holds_and_reservations.feature, read from disk via
 // LoadFeatureFile() - see GherkinBakeryStandardOrder.cpp's comment for why.
 
-int main() {
+StepRegistry PrepareRegistry() {
     StepRegistry registry = MakeLibraryStepRegistry();
 
     // Extra step definition specific to this file: a pickup notification
@@ -25,9 +25,10 @@ int main() {
         });
     registry.Merge(notificationExtras);
 
-    const std::string feature = LoadFeatureFile("library_holds_and_reservations.feature");
+    return registry;
+}
 
-    const auto result =
-        RunFeature(feature, registry, "examples/gherkin/features/library_holds_and_reservations.feature");
-    return result.allPassed ? 0 : 1;
+int main() {
+    StepRegistry registry = PrepareRegistry();
+    return RunFeatureFromFile(registry, "library_holds_and_reservations.feature");
 }

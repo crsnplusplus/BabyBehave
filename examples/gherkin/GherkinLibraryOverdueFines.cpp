@@ -11,11 +11,11 @@
 // library_overdue_fines.feature, read from disk via LoadFeatureFile()
 // - see GherkinBakeryStandardOrder.cpp's comment for why.
 
+StepRegistry PrepareRegistry() {
+    return MakeLibraryStepRegistry();
+}
+
 int main() {
-    StepRegistry registry = MakeLibraryStepRegistry();
-
-    const std::string feature = LoadFeatureFile("library_overdue_fines.feature");
-
-    const auto result = RunFeature(feature, registry, "examples/gherkin/features/library_overdue_fines.feature");
-    return result.allPassed ? 0 : 1;
+    StepRegistry registry = PrepareRegistry();
+    return RunFeatureFromFile(registry, "library_overdue_fines.feature");
 }

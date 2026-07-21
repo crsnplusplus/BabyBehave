@@ -11,7 +11,7 @@
 // bakery_allergen_substitution.feature, read from disk via
 // LoadFeatureFile() - see GherkinBakeryStandardOrder.cpp's comment for why.
 
-int main() {
+StepRegistry PrepareRegistry() {
     StepRegistry registry = MakeBakeryStepRegistry();
 
     // Extra step definition specific to this file: confirms the kitchen's
@@ -25,9 +25,10 @@ int main() {
         });
     registry.Merge(kitchenExtras);
 
-    const std::string feature = LoadFeatureFile("bakery_allergen_substitution.feature");
+    return registry;
+}
 
-    const auto result =
-        RunFeature(feature, registry, "examples/gherkin/features/bakery_allergen_substitution.feature");
-    return result.allPassed ? 0 : 1;
+int main() {
+    auto registry = PrepareRegistry();
+    return RunFeatureFromFile(registry, "bakery_allergen_substitution.feature");
 }
