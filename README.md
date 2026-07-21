@@ -503,14 +503,14 @@ Two opt-in options are available when configuring the project itself (not needed
 
 ```bash
 # AddressSanitizer + UndefinedBehaviorSanitizer
-cmake -B build -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -B build/bb-debug -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/bb-debug
+ctest --test-dir build/bb-debug --output-on-failure
 
 # gcov-based code coverage (also builds an HTML `coverage-report` target if lcov + genhtml are found)
-cmake -B build -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-cmake --build build --target coverage-report   # only if lcov/genhtml are installed
+cmake -B build/coverage -DBABYBEHAVE_ENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/coverage
+cmake --build build/coverage --target coverage-report   # only if lcov/genhtml are installed
 ```
 
 (Gherkin is now on by default; there is no CMake option to gate it, since disabling it is a consumer's compile-time decision via `BABYBEHAVE_DISABLE_GHERKIN`.)
@@ -518,7 +518,7 @@ cmake --build build --target coverage-report   # only if lcov/genhtml are instal
 With `BABYBEHAVE_ENABLE_COVERAGE=ON` and `gcov` available, two independent coverage measurements are also available as build targets:
 
 ```bash
-cmake --build build --target coverage-ut coverage-bbh
+cmake --build build/coverage --target coverage-ut coverage-bbh
 ```
 
 - **`coverage-ut`** — coverage of `bdd.hpp` as exercised by the gtest unit test suite in [`tests/`](tests/).
@@ -531,9 +531,9 @@ There are two separate targets, not one, because `bdd.hpp` is header-only and te
 ```bash
 git clone https://github.com/crsnplusplus/BabyBehave.git
 cd BabyBehave
-cmake -B build
-cmake --build build
-ctest --test-dir build
+cmake -B build/bb-release
+cmake --build build/bb-release
+ctest --test-dir build/bb-release
 ```
 
 See the [`examples/`](examples/) and [`tests/`](tests/) directories for working scenarios.
