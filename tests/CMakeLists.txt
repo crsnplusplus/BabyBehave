@@ -27,10 +27,20 @@ FetchContent_MakeAvailable(googletest)
 # googletest's own headers trigger warnings on some toolchains (e.g.
 # gtest-printers.h's char8_t->char32_t conversion under AppleClang's
 # -Wcharacter-conversion) that have nothing to do with our code. SYSTEM marks
-# its include dirs so those are suppressed wherever the headers are used,
-# rather than papering over them with a project-wide -Wno-* flag. Needs CMake
-# >= 3.25; harmlessly ignored (property unset, no suppression) on older CMake.
+# its include dirs so those are suppressed for anything consuming gtest's
+# headers, rather than papering over them with a project-wide -Wno-* flag.
+# Needs CMake >= 3.25; harmlessly ignored (property unset, no suppression) on
+# older CMake.
 set_target_properties(gtest gtest_main gmock gmock_main PROPERTIES SYSTEM TRUE)
+
+# SYSTEM above only covers consumers of gtest's headers - the warning above
+# actually fires while compiling googletest's OWN library sources (its
+# printer templates get explicitly instantiated inside its own .cc files), so
+# it needs the flag disabled directly on gtest/gmock's own compile options too.
+foreach(googletest_target IN ITEMS gtest gtest_main gmock gmock_main)
+  target_compile_options(${googletest_target} PRIVATE
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-character-conversion>)
+endforeach()
 
 add_executable(test_TestContext test_Testcontext.cpp)
 target_link_libraries(test_TestContext BabyBehave::BabyBehave gtest_main babybehave_coverage_flags babybehave_sanitizer_flags)
