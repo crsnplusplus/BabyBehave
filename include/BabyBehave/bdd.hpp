@@ -3673,7 +3673,15 @@ namespace Gherkin {
                 timeout ? std::make_shared<ScenarioDeadline>(ScenarioDeadline{ .timeout = timeout }) : nullptr;
 
             // suppressGivenNarration=true: synthetic no-op setup (suppresses redundant line).
+            // loc passed explicitly (not defaulted): the no-op lambda can never throw, so
+            // m_contextSetupLocation is dead for this call regardless of its value - explicit
+            // here only to avoid relying on the constructor's own default-argument evaluation
+            // as this codebase's sole caller of it.
+#if defined(__cpp_lib_source_location)
+            BabyBehaveTest test(scenario.name, [](TestContext&) {}, true, std::source_location::current());
+#else
             BabyBehaveTest test(scenario.name, [](TestContext&) {}, true);
+#endif
 
             // Force collect-failures mode to guarantee After hooks run (reimplements
             // fail-hard below by inspecting TestResult::allPassed after Execute()).

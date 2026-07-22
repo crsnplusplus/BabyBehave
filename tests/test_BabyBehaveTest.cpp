@@ -121,6 +121,17 @@ TEST(BabyBehaveTest, NarrationStyle_ParseEnvAndRenderersProduceOutput) {
     EXPECT_NE(capturedOut.find("GIVEN"), std::string::npos);
 }
 
+TEST(BabyBehaveTest, ConstructorLocationDefaultsToCallerWhenOmitted) {
+    // Exercises the (testName, contextSetupFn, suppressGivenNarration) constructor
+    // directly, letting `loc` default to std::source_location::current() instead of
+    // being passed explicitly - RunFeature()'s own per-scenario construction now passes
+    // loc explicitly, so this is this suite's only remaining caller of the default.
+    BabyBehave::BDD::BabyBehaveTest test("ConstructorLocationDefault", [](BabyBehave::BDD::TestContext&) {}, true);
+    test.SetCollectFailuresMode(true);
+    test.With([](BabyBehave::BDD::TestContext&) { return true; });
+    EXPECT_TRUE(test.Execute().allPassed);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
