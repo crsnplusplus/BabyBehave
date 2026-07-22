@@ -5,7 +5,7 @@ from conan.tools.files import copy
 
 class BabyBehaveConan(ConanFile):
     name = "babybehave"
-    version = "0.9.0"
+    version = "0.9.1"
     license = "MIT"
     url = "https://github.com/crsnplusplus/BabyBehave"
     homepage = url
