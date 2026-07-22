@@ -282,7 +282,7 @@ if(BABYBEHAVE_ENABLE_COVERAGE)
 		#   cmake --build build --target coverage-gate
 		#   cmake --build build --target coverage-gate -- (or re-run cmake) \
 		#     -DBABYBEHAVE_MIN_COVERAGE_PERCENT=95   # to require a different bar
-		set(BABYBEHAVE_MIN_COVERAGE_PERCENT "90" CACHE STRING
+		set(BABYBEHAVE_MIN_COVERAGE_PERCENT "100" CACHE STRING
 			"Minimum required bdd.hpp 'Lines executed' percentage for coverage-ut-gate/coverage-bbh-gate/coverage-gate to pass")
 
 		set(_babybehave_coverage_gate_script "${CMAKE_SOURCE_DIR}/cmake/check_coverage_threshold.cmake")

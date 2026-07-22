@@ -1,52 +1,48 @@
 #include <BabyBehave/bdd.hpp>
 #include <algorithm>
-#include <iostream>
+#include <string>
 #include <vector>
 
 using namespace BabyBehave::BDD;
 using namespace BabyBehave::BDD::Gherkin;
 
+namespace {
+
+constexpr Key<std::vector<std::string>> kItems{"items"};
+
+bool GivenEmptyBasket(TestContext& ctx) {
+    ctx.Set(kItems, std::vector<std::string>{});
+    return true;
+}
+
+bool WhenAddItems(TestContext& ctx, int count, std::string itemType) {
+    auto& items = ctx.Mutate(kItems);
+    for (int i = 0; i < count; ++i) {
+        items.push_back(itemType);
+    }
+    return true;
+}
+
+bool ThenBasketHasItems(TestContext& ctx, int expectedCount) {
+    return ctx.Get(kItems).size() == static_cast<std::size_t>(expectedCount);
+}
+
+bool ThenBasketContainsItems(TestContext& ctx, int count, std::string itemType) {
+    const auto items = ctx.Get(kItems);
+    const auto actualCount = std::count(items.begin(), items.end(), itemType);
+    return actualCount == count;
+}
+
+} // namespace
+
 int main() {
     StepRegistry registry;
 
-    // Register Given steps
-    registry.RegisterGiven("an empty basket", [](TestContext& ctx) -> bool {
-        ctx.Set("items", std::vector<std::string>{});
-        return true;
-    });
-
-    // Helper lambdas to add items
-    auto addItemsFn = [](TestContext& ctx, int count, std::string itemType) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        for (int i = 0; i < count; ++i) {
-            items.push_back(itemType);
-        }
-        ctx.Set("items", items);
-        return true;
-    };
-
-    auto checkItemsFn = [](TestContext& ctx, int expectedCount) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        return items.size() == static_cast<std::size_t>(expectedCount);
-    };
-
-    auto containsItemFn = [](TestContext& ctx, int count, std::string itemType) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        const auto actualCount = std::count(items.begin(), items.end(), itemType);
-        return actualCount == count;
-    };
-
-    // Register When steps
-    registry.RegisterWhen("I add {int} {word}", addItemsFn);
-
-    // Register And steps (needed because "And" is a separate keyword category)
-    registry.RegisterAnd("I add {int} {word}", addItemsFn);
-    registry.RegisterAnd("the basket has {int} items", checkItemsFn);
-    registry.RegisterAnd("the basket contains {int} {word}", containsItemFn);
-
-    // Register Then steps
-    registry.RegisterThen("the basket has {int} items", checkItemsFn);
-    registry.RegisterThen("the basket contains {int} {word}", containsItemFn);
+    // Register step definitions as one scannable table: pattern + keyword(s) + implementation.
+    registry.RegisterGiven("an empty basket", GivenEmptyBasket);
+    registry.RegisterStep({Keyword::When, Keyword::And}, "I add {int} {word}", WhenAddItems);
+    registry.RegisterStep({Keyword::Then, Keyword::And}, "the basket has {int} items", ThenBasketHasItems);
+    registry.RegisterStep({Keyword::Then, Keyword::And}, "the basket contains {int} {word}", ThenBasketContainsItems);
 
     const std::string_view feature = R"feature(
 Feature: Shopping basket
@@ -59,6 +55,6 @@ Feature: Shopping basket
     And the basket contains 2 orange(s)
 )feature";
 
-    const auto result = RunFeature(feature, registry, "examples/GherkinBasket.cpp");
-    return result.allPassed ? 0 : 1;
+    const auto result = Feature(std::string(feature), registry).Label("examples/GherkinBasket.cpp").Run();
+    return result.ExitCode();
 }

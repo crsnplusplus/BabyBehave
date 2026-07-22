@@ -151,3 +151,13 @@ target_compile_definitions(example_GherkinLibraryPriorityPatronHandling PRIVATE 
 add_executable(example_GherkinBakeryDailyOvenLifecycle gherkin/GherkinBakeryDailyOvenLifecycle.cpp)
 target_link_libraries(example_GherkinBakeryDailyOvenLifecycle PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
 target_compile_definitions(example_GherkinBakeryDailyOvenLifecycle PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")
+
+# Sequential (non-parallel) counterpart to example_GherkinLibraryConcurrentLending:
+# ONE StepRegistry, built once, run against several already-passing bakery
+# .feature files in the SAME thread/process, results aggregated in one
+# place. See GherkinBakerySequentialFeatures.cpp's own comment for exactly
+# which features were chosen and why (never bakery_late_cancellation.feature,
+# which is a deliberate failure demo).
+add_executable(example_GherkinBakerySequentialFeatures gherkin/GherkinBakerySequentialFeatures.cpp)
+target_link_libraries(example_GherkinBakerySequentialFeatures PRIVATE BabyBehave::BabyBehave babybehave_coverage_flags babybehave_sanitizer_flags)
+target_compile_definitions(example_GherkinBakerySequentialFeatures PRIVATE BABYBEHAVE_GHERKIN_FEATURES_DIR="${BABYBEHAVE_GHERKIN_FEATURES_DIR}")

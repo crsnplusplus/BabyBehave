@@ -26,6 +26,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -1084,6 +1086,65 @@ Feature: Has a Rule
     EXPECT_NE(collected[0].find("'Rule:' is not supported"), std::string::npos) << collected[0];
 }
 
+// Every independent structural error found during parsing produces its own
+// onFailure(...) call (see RunFeature()'s errors-loop right after
+// impl::ParseFeatureText, and impl::RecordParseError/impl::ParseOutcome's
+// doc comment above it) - the test right above this one, and
+// MalformedFeatureFailsHardThroughRunFeature further down, both only ever
+// exercise a SINGLE accumulated error. This feature text packs three
+// independent, unrelated structural errors (an unsupported 'Rule:', a Data
+// Table with no preceding step, and a stray 'Examples:' outside any
+// Scenario Outline/Template) to verify the multi-error path end-to-end: all
+// three surface through one RunFeature() call, in source order, each
+// formatted as "<label>:<line>: parse error: <message>".
+TEST(GherkinIntegration, RunFeatureAccumulatesMultipleIndependentStructuralParseErrors) {
+    StepRegistry registry;
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Has multiple independent structural errors
+  Rule: not supported
+
+  Scenario: Orphan table, no preceding step
+    | a | b |
+
+  Examples:
+    | x |
+)FEATURE";
+
+    std::vector<std::string> collected;
+    const GherkinFailureCallback callback = [&collected](std::string_view message) {
+        collected.emplace_back(message);
+    };
+
+    const FeatureResult result = RunFeature(feature, registry, "multi-error.feature", callback);
+
+    // RunFeature returned normally (no exit), same as the single-error case.
+    EXPECT_FALSE(result.allPassed);
+    EXPECT_TRUE(result.featureName.empty());
+    EXPECT_TRUE(result.scenarioResults.empty());
+    ASSERT_EQ(collected.size(), 3u);
+
+    // Every collected entry must match "<label>:<line>: parse error:
+    // <message>" - checked structurally (label, then an all-digit line
+    // number, then the "parse error: " marker) rather than pinning exact
+    // line numbers, since this test is about the accumulation/formatting
+    // contract, not about this particular feature text's exact layout.
+    static constexpr std::string_view kPrefix = "multi-error.feature:";
+    static constexpr std::string_view kInfix = ": parse error: ";
+    for (const std::string& message : collected) {
+        ASSERT_TRUE(message.starts_with(kPrefix)) << message;
+        const std::size_t infixPos = message.find(kInfix, kPrefix.size());
+        ASSERT_NE(infixPos, std::string::npos) << message;
+        const std::string_view lineDigits(message.data() + kPrefix.size(), infixPos - kPrefix.size());
+        ASSERT_FALSE(lineDigits.empty()) << message;
+        for (const char digit : lineDigits) {
+            EXPECT_TRUE(digit >= '0' && digit <= '9') << message;
+        }
+    }
+    EXPECT_NE(collected[0].find("'Rule:' is not supported"), std::string::npos) << collected[0];
+    EXPECT_NE(collected[1].find("data table with no preceding step"), std::string::npos) << collected[1];
+    EXPECT_NE(collected[2].find("'Examples:'/'Scenarios:' without a preceding"), std::string::npos) << collected[2];
+}
+
 TEST(GherkinIntegration, CustomFailureCallbackForScenarioFailureCollectsMessageAndKeepsGoing) {
     StepRegistry registry;
     registry.RegisterGiven("a valid card", [](TestContext&) -> bool { return true; });
@@ -1116,13 +1177,236 @@ Feature: Non-exiting custom callback
     EXPECT_FALSE(result.scenarioResults[0].allPassed);
     EXPECT_TRUE(result.scenarioResults[1].allPassed);
 
+    // FormatScenarioFailureMessage's one-line digest (v0.9.1): exactly one
+    // onFailure call (asserted above), and its message is a single concise
+    // line - never the old '\n'-joined multi-line blob - pointing at the
+    // FIRST failing step only. Full per-step detail remains available via
+    // result.scenarioResults[0].steps regardless of this digest's content.
     ASSERT_EQ(collected.size(), 1u);
-    EXPECT_NE(collected[0].find("BabyBehave::Gherkin: scenario 'One failure must not stop the rest' failed:"),
+    EXPECT_EQ(collected[0].find('\n'), std::string::npos) << collected[0];
+    EXPECT_NE(collected[0].find("non-exiting.feature:3: scenario failed: "
+                                 "'One failure must not stop the rest' - 1/3 step(s) failed, "
+                                 "first: [Action] I charge a negative amount: Action failed"),
               std::string::npos)
         << collected[0];
-    EXPECT_NE(collected[0].find("[Action] I charge a negative amount: Action failed"), std::string::npos)
+}
+
+TEST(GherkinIntegration, ScenarioWithMultipleFailingStepsInvokesOnFailureExactlyOnceWithASingleLineMessage) {
+    // Cardinality is unchanged by the v0.9.1 message-format rewrite: still
+    // exactly ONE onFailure(...) call per failed Scenario, even when
+    // several of its steps fail (here: 2 of 4) - FormatScenarioFailureMessage
+    // only changes what that single call's message looks like (a one-line
+    // digest of the FIRST failure, not a multi-line dump of every one).
+    StepRegistry registry;
+    registry.RegisterGiven("a valid setup", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("the first action fails", [](TestContext&) -> bool { return false; });
+    registry.RegisterThen("the second assertion also fails", [](TestContext&) -> bool { return false; });
+    registry.RegisterAnd("a final step that still runs", [](TestContext&) -> bool { return true; });
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Multiple failing steps in one scenario
+  Scenario: Two of four steps fail
+    Given a valid setup
+    When the first action fails
+    Then the second assertion also fails
+    And a final step that still runs
+)FEATURE";
+
+    std::vector<std::string> collected;
+    const GherkinFailureCallback callback = [&collected](std::string_view message) {
+        collected.emplace_back(message);
+    };
+
+    const FeatureResult result = RunFeature(feature, registry, "multi-fail.feature", callback);
+
+    EXPECT_FALSE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 1u);
+    EXPECT_FALSE(result.scenarioResults[0].allPassed);
+    // Per-step detail is untouched: all 4 steps are still individually
+    // present/inspectable, 2 of them recorded as failed.
+    ASSERT_EQ(result.scenarioResults[0].steps.size(), 4u);
+    std::size_t failedSteps = 0;
+    for (const auto& step : result.scenarioResults[0].steps) {
+        if (!step.passed) ++failedSteps;
+    }
+    EXPECT_EQ(failedSteps, 2u);
+
+    // Exactly one onFailure call, and it is a single line naming the FIRST
+    // failure (the When step) with a "2/4 step(s) failed" digest, not one
+    // call/line per failing step.
+    ASSERT_EQ(collected.size(), 1u);
+    EXPECT_EQ(collected[0].find('\n'), std::string::npos) << collected[0];
+    EXPECT_NE(collected[0].find("multi-fail.feature:3: scenario failed: 'Two of four steps fail' - "
+                                 "2/4 step(s) failed, first: [Action] the first action fails: Action failed"),
+              std::string::npos)
         << collected[0];
-    EXPECT_NE(collected[0].find("non-exiting.feature:"), std::string::npos) << collected[0];
+}
+
+TEST(GherkinIntegration, ThreeScenariosWhereOnlyTheSecondFailsProducesExactlyOneConciseMessageAndScenarioThreeStillRuns) {
+    // The original motivating scenario for this v0.9.1 change: with the OLD
+    // multi-line FormatScenarioFailureMessage, a Feature with several
+    // Scenarios where only one fails in the middle still worked correctly,
+    // but its onFailure message was a multi-line blob; this confirms the
+    // new one-line digest is produced for exactly the failing Scenario
+    // (Scenario 2), that Scenario 1 and Scenario 3 are unaffected, and -
+    // crucially - that Scenario 3 actually EXECUTES and PASSES (only
+    // possible with a non-exiting onFailure; the default callback would
+    // have hard-exited at Scenario 2 and Scenario 3 would never run).
+    StepRegistry registry;
+    registry.RegisterGiven("scenario one's setup", [](TestContext&) -> bool { return true; });
+    registry.RegisterGiven("scenario two's setup", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("scenario two's action fails", [](TestContext&) -> bool { return false; });
+    registry.RegisterGiven("scenario three's setup", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("scenario three's action succeeds", [](TestContext&) -> bool { return true; });
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Three scenarios, only the middle one fails
+  Scenario: First
+    Given scenario one's setup
+
+  Scenario: Second
+    Given scenario two's setup
+    When scenario two's action fails
+
+  Scenario: Third
+    Given scenario three's setup
+    When scenario three's action succeeds
+)FEATURE";
+
+    std::vector<std::string> collected;
+    const GherkinFailureCallback callback = [&collected](std::string_view message) {
+        collected.emplace_back(message);
+    };
+
+    const FeatureResult result = RunFeature(feature, registry, "three-scenarios.feature", callback);
+
+    EXPECT_FALSE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 3u);
+    EXPECT_TRUE(result.scenarioResults[0].allPassed);
+    EXPECT_FALSE(result.scenarioResults[1].allPassed);
+    // The whole point: Scenario 3 actually ran (not skipped by an early
+    // exit) and passed.
+    EXPECT_TRUE(result.scenarioResults[2].allPassed);
+    ASSERT_EQ(result.scenarioResults[2].steps.size(), 2u);
+    EXPECT_TRUE(result.scenarioResults[2].steps[0].passed);
+    EXPECT_TRUE(result.scenarioResults[2].steps[1].passed);
+
+    // Exactly one concise, single-line message - for Scenario 2 only.
+    ASSERT_EQ(collected.size(), 1u);
+    EXPECT_EQ(collected[0].find('\n'), std::string::npos) << collected[0];
+    EXPECT_NE(collected[0].find("three-scenarios.feature:6: scenario failed: 'Second' - "
+                                 "1/2 step(s) failed, first: [Action] scenario two's action fails: Action failed"),
+              std::string::npos)
+        << collected[0];
+}
+
+TEST(GherkinIntegration, CollectingFailureHandlerConvertsToGherkinFailureCallbackAndCollectsEveryMessage) {
+    // Gherkin::CollectingFailureHandler must be usable directly as
+    // RunFeature()'s onFailure argument (GherkinFailureCallback is
+    // std::function<void(std::string_view)>, and CollectingFailureHandler's
+    // operator() matches that signature exactly) - this is the class that
+    // promotes the hand-duplicated mutex+vector+lambda pattern already used
+    // by several examples/gherkin/*.cpp files. Sequential (non-parallel)
+    // sanity check first; the parallel/thread-safety guarantee is covered
+    // separately below.
+    StepRegistry registry;
+    registry.RegisterGiven("a step that passes", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("a step that fails", [](TestContext&) -> bool { return false; });
+    registry.RegisterGiven("another passing step", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("another failing step", [](TestContext&) -> bool { return false; });
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Using CollectingFailureHandler directly
+  Scenario: A
+    Given a step that passes
+    When a step that fails
+
+  Scenario: B
+    Given another passing step
+    When another failing step
+)FEATURE";
+
+    std::vector<std::string> sink;
+    const Gherkin::CollectingFailureHandler handler(sink);
+    const GherkinFailureCallback callback = handler; // must convert cleanly.
+
+    const FeatureResult result = RunFeature(feature, registry, "collecting-handler.feature", callback);
+
+    EXPECT_FALSE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 2u);
+    EXPECT_FALSE(result.scenarioResults[0].allPassed);
+    EXPECT_FALSE(result.scenarioResults[1].allPassed);
+
+    // Non-exiting (both Scenarios ran to completion) and every message
+    // landed in the caller-owned sink, one per failed Scenario.
+    ASSERT_EQ(sink.size(), 2u);
+    EXPECT_NE(sink[0].find("scenario failed: 'A'"), std::string::npos) << sink[0];
+    EXPECT_NE(sink[1].find("scenario failed: 'B'"), std::string::npos) << sink[1];
+}
+
+TEST(GherkinParallelExecution, CollectingFailureHandlerIsThreadSafeUnderParallelScenarioExecution) {
+    // Same concurrent-failure shape as
+    // ParallelModeCollectsFailuresFromConcurrentlyFailingScenariosThreadSafely
+    // above, but exercising Gherkin::CollectingFailureHandler itself
+    // (rather than a hand-rolled atomic-counter + mutex-guarded-vector
+    // lambda) as the onFailure callback under
+    // enableParallelScenarios=true - the whole point of this class being
+    // internally mutex-guarded (see its doc comment in bdd.hpp) is that it
+    // is safe to use exactly like this, without the caller having to
+    // reimplement that synchronization themselves.
+    StepRegistry registry;
+    registry.RegisterGiven("a valid setup", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("I wait {int} ms then pass", [](TestContext&, int ms) -> bool {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return true;
+    });
+    registry.RegisterWhen("I wait {int} ms then fail", [](TestContext&, int ms) -> bool {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return false;
+    });
+    registry.RegisterThen("it completes", [](TestContext&) -> bool { return true; });
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Concurrent failures via CollectingFailureHandler
+  Scenario: Passing one
+    Given a valid setup
+    When I wait 10 ms then pass
+    Then it completes
+
+  Scenario: Failing one
+    Given a valid setup
+    When I wait 40 ms then fail
+    Then it completes
+
+  Scenario: Passing two
+    Given a valid setup
+    When I wait 20 ms then pass
+    Then it completes
+
+  Scenario: Failing two
+    Given a valid setup
+    When I wait 30 ms then fail
+    Then it completes
+)FEATURE";
+
+    std::vector<std::string> sink;
+    const Gherkin::CollectingFailureHandler handler(sink);
+
+    const FeatureResult result = RunFeature(feature, registry, "parallel-collecting-handler.feature", handler,
+                                              /*enableParallelScenarios=*/true);
+
+    EXPECT_FALSE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 4u);
+    EXPECT_TRUE(result.scenarioResults[0].allPassed);
+    EXPECT_FALSE(result.scenarioResults[1].allPassed);
+    EXPECT_TRUE(result.scenarioResults[2].allPassed);
+    EXPECT_FALSE(result.scenarioResults[3].allPassed);
+
+    // No lost/duplicated messages from a data race inside the handler
+    // itself - exactly one entry per failing Scenario.
+    ASSERT_EQ(sink.size(), 2u);
+    EXPECT_NE(sink[0].find("Failing"), std::string::npos) << sink[0];
+    EXPECT_NE(sink[1].find("Failing"), std::string::npos) << sink[1];
 }
 
 TEST(GherkinIntegrationDeathTest, AfterHookStillRunsAfterAnEarlierFailure) {
@@ -2370,4 +2654,400 @@ Feature: Suite hooks coexist with per-Scenario hooks
     // Per-Scenario, tag-expression-filtered: only the @special Scenario (1 total).
     EXPECT_EQ(exprBeforeCount, 1);
     EXPECT_EQ(exprAfterCount, 1);
+}
+
+// ---------------------------------------------------------------------
+// StepRegistry::RegisterStep() - one pattern+callable registered under
+// several keywords at once (v0.9.1 ergonomics layer - see
+// docs/design/gherkin-support.md and bdd.hpp's RegisterStep doc comment).
+// ---------------------------------------------------------------------
+
+TEST(GherkinErgonomics, RegisterStepUnderMultipleKeywordsCopiesNotMovesTheCallable) {
+    StepRegistry registry;
+    // A shared_ptr capture: moving a shared_ptr leaves the MOVED-FROM one
+    // null, while copying it leaves both valid and pointing at the same
+    // object - unlike a trivial (e.g. int) capture, whose "moved-from"
+    // state is indistinguishable from a fresh copy. If RegisterStep ever
+    // moved fn directly into the keywords loop instead of copying it fresh
+    // per iteration, every keyword after the first would silently receive
+    // a step definition wrapping a NULL shared_ptr (this lambda returns
+    // false, cleanly, rather than dereferencing it - no crash, so the
+    // test surfaces as an ordinary assertion failure instead of a fault).
+    // All FIVE keywords are registered (not just two) so this is also the
+    // only place RegisterStep's own keyword-dispatch switch (Given/When/
+    // Then/And/But) gets full case coverage - RegisterSteps below only ever
+    // exercises Given/When/Then/And/But through RegisterOneStep's OWN
+    // separate switch, not this one.
+    auto shared = std::make_shared<int>(42);
+    auto lambda = [shared](TestContext&) -> bool { return shared != nullptr && *shared == 42; };
+    registry.RegisterStep({Keyword::Given, Keyword::When, Keyword::Then, Keyword::And, Keyword::But},
+                          "a shared idempotent check", lambda);
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: RegisterStep reaches every keyword with working, independent copies
+  Scenario: Every keyword fires its own copy
+    Given a shared idempotent check
+    When a shared idempotent check
+    Then a shared idempotent check
+    And a shared idempotent check
+    But a shared idempotent check
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, registry, "register-step-multi-keyword.feature");
+    EXPECT_TRUE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 1u);
+    // Every step reports "passed" (StepResult) - if any copy had been
+    // moved-from, the underlying std::function would either throw
+    // std::bad_function_call or the capture would misbehave; this proves
+    // every keyword-path ran a real, working callable.
+    ASSERT_EQ(result.scenarioResults[0].steps.size(), 5u);
+    for (const auto& step : result.scenarioResults[0].steps) {
+        EXPECT_TRUE(step.passed);
+    }
+}
+
+TEST(GherkinErgonomicsDeathTest, RegisterStepEmptyKeywordListRegistersNothing) {
+    // No keyword is registered when `keywords` is empty, so a Scenario
+    // using this text under any keyword must fail hard (unmatched step) -
+    // proves the loop genuinely iterates over `keywords` rather than
+    // defaulting to "register everywhere".
+    SetNarrationEnabled(true); // "no step definition matches" goes through PrintErrorLine, which is narration-gated.
+    EXPECT_EXIT(
+        {
+            StepRegistry localRegistry;
+            localRegistry.RegisterStep({}, "never matched", [](TestContext&) -> bool { return true; });
+            constexpr std::string_view feature = R"FEATURE(
+Feature: Empty keyword list
+  Scenario: nothing registered
+    Given never matched
+)FEATURE";
+            RunFeature(feature, localRegistry, "register-step-empty.feature");
+        },
+        ::testing::ExitedWithCode(EXIT_FAILURE),
+        "no step definition matches");
+    SetNarrationEnabled(false);
+}
+
+// ---------------------------------------------------------------------
+// StepRegistry::RegisterSteps() - variadic bulk registration, the main
+// deliverable of the v0.9.1 ergonomics layer. Deliberately a variadic
+// PARAMETER PACK of StepEntry<Fs>&&, not std::initializer_list<StepEntry<...>>:
+// an initializer_list would force every entry to share exactly one F
+// (impossible for real step definitions, which are almost always distinct
+// lambda types) and would only ever expose `const T&` to the callable
+// inside, which cannot be moved out. The pack forwards each entry
+// individually instead.
+// ---------------------------------------------------------------------
+
+TEST(GherkinErgonomics, RegisterStepsRegistersAHeterogeneousBatchInOneCall) {
+    StepRegistry registry;
+    auto sharedCounter = std::make_shared<int>(0);
+
+    registry.RegisterSteps(
+        StepEntry{Keyword::Given, "a fresh basket", [](TestContext& ctx) -> bool {
+            ctx.Set("items", 0);
+            return true;
+        }},
+        StepEntry{Keyword::When, "I add {int} items", [](TestContext& ctx, int count) -> bool {
+            ctx.Set("items", ctx.Get<int>("items") + count);
+            return true;
+        }},
+        // A distinct capturing-lambda TYPE (captures sharedCounter) sharing
+        // one RegisterSteps() call with the two capture-less lambdas above -
+        // impossible via std::initializer_list<StepEntry<F>>, which requires
+        // one common F for every element.
+        StepEntry{Keyword::Then, "the basket has {int} items", [sharedCounter](TestContext& ctx, int expected) -> bool {
+            ++(*sharedCounter);
+            return ctx.Get<int>("items") == expected;
+        }});
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: RegisterSteps bulk registration
+  Scenario: All three entries registered in one call
+    Given a fresh basket
+    When I add 4 items
+    Then the basket has 4 items
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, registry, "register-steps-batch.feature");
+    EXPECT_TRUE(result.allPassed);
+    EXPECT_EQ(*sharedCounter, 1);
+}
+
+TEST(GherkinErgonomics, RegisterStepsAcceptsASingleEntry) {
+    StepRegistry registry;
+    registry.RegisterSteps(StepEntry{Keyword::Given, "a lone step", [](TestContext&) -> bool { return true; }});
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: RegisterSteps with one entry
+  Scenario: single entry
+    Given a lone step
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, registry, "register-steps-single.feature");
+    EXPECT_TRUE(result.allPassed);
+}
+
+// RegisterStepsRegistersAHeterogeneousBatchInOneCall above only exercises
+// Given/When/Then - this covers RegisterOneStep's own private keyword-
+// dispatch switch (a SEPARATE switch from RegisterStep's, see
+// RegisterStepUnderMultipleKeywordsCopiesNotMovesTheCallable above) for its
+// remaining two cases, And and But.
+TEST(GherkinErgonomics, RegisterStepsSupportsAndAndButKeywords) {
+    StepRegistry registry;
+    registry.RegisterSteps(
+        StepEntry{Keyword::Given, "a starting condition", [](TestContext&) -> bool { return true; }},
+        StepEntry{Keyword::And, "an additional given condition", [](TestContext&) -> bool { return true; }},
+        StepEntry{Keyword::But, "not a contradicting condition", [](TestContext&) -> bool { return true; }});
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: RegisterSteps reaches And/But via RegisterOneStep's own keyword dispatch
+  Scenario: And and But both fire
+    Given a starting condition
+    And an additional given condition
+    But not a contradicting condition
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, registry, "register-steps-and-but.feature");
+    EXPECT_TRUE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 1u);
+    ASSERT_EQ(result.scenarioResults[0].steps.size(), 3u);
+    for (const auto& step : result.scenarioResults[0].steps) {
+        EXPECT_TRUE(step.passed);
+    }
+}
+
+// ---------------------------------------------------------------------
+// StepRegistry::AddAroundHook()/AddAroundHookExpr() - sugar pairing a
+// Before+After hook under the same filter in one call. Pure forwarders to
+// AddBeforeHook(Expr)/AddAfterHook(Expr) - these tests confirm both hooks
+// actually fire, in the right relative order around Background/steps.
+// ---------------------------------------------------------------------
+
+TEST(GherkinErgonomics, AddAroundHookFiresBeforeAndAfterInCorrectOrderAroundBackgroundAndSteps) {
+    StepRegistry registry;
+    std::vector<std::string> order;
+    registry.AddAroundHook({}, [&order](TestContext&) { order.push_back("before"); },
+                             [&order](TestContext&) { order.push_back("after"); });
+    registry.RegisterGiven("a background step", [&order](TestContext&) -> bool {
+        order.push_back("background");
+        return true;
+    });
+    registry.RegisterWhen("a scenario step", [&order](TestContext&) -> bool {
+        order.push_back("step");
+        return true;
+    });
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Around hook ordering
+  Background:
+    Given a background step
+
+  Scenario: one
+    When a scenario step
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, registry, "around-hook-order.feature");
+    EXPECT_TRUE(result.allPassed);
+    ASSERT_EQ(order.size(), 4u);
+    EXPECT_EQ(order[0], "before");
+    EXPECT_EQ(order[1], "background");
+    EXPECT_EQ(order[2], "step");
+    EXPECT_EQ(order[3], "after");
+}
+
+TEST(GherkinErgonomics, AddAroundHookExprFiresOnlyForScenariosMatchingTheExpression) {
+    StepRegistry registry;
+    int beforeCount = 0;
+    int afterCount = 0;
+    registry.AddAroundHookExpr("@special", [&beforeCount](TestContext&) { ++beforeCount; },
+                                 [&afterCount](TestContext&) { ++afterCount; });
+    registry.RegisterGiven("a step", [](TestContext&) -> bool { return true; });
+
+    constexpr std::string_view feature = R"FEATURE(
+Feature: Around hook expression filtering
+  Scenario: Untagged
+    Given a step
+
+  @special
+  Scenario: Tagged
+    Given a step
+)FEATURE";
+
+    const FeatureResult result = RunFeature(feature, registry, "around-hook-expr.feature");
+    EXPECT_TRUE(result.allPassed);
+    EXPECT_EQ(beforeCount, 1);
+    EXPECT_EQ(afterCount, 1);
+}
+
+// ---------------------------------------------------------------------
+// FeatureResult::ExitCode() - trivial convenience for a process main().
+// ---------------------------------------------------------------------
+
+TEST(GherkinErgonomics, ExitCodeIsZeroWhenAllPassedAndOneOtherwise) {
+    FeatureResult passing;
+    passing.allPassed = true;
+    EXPECT_EQ(passing.ExitCode(), 0);
+
+    FeatureResult failing;
+    failing.allPassed = false;
+    EXPECT_EQ(failing.ExitCode(), 1);
+}
+
+// ---------------------------------------------------------------------
+// Gherkin::LoadFeatureFile() - plain std::ifstream read into a
+// std::string, no CMake-define/build-system dependency (unlike
+// examples/gherkin/LoadFeatureFile.hpp's example-only helper).
+// ---------------------------------------------------------------------
+
+TEST(GherkinErgonomics, LoadFeatureFileReadsRealFileContentsVerbatim) {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "babybehave_load_feature_file_test.feature";
+    {
+        std::ofstream out(path);
+        out << "Feature: Loaded from disk\n  Scenario: one\n    Given a step\n";
+    }
+
+    const std::string contents = LoadFeatureFile(path);
+    EXPECT_NE(contents.find("Feature: Loaded from disk"), std::string::npos);
+    EXPECT_NE(contents.find("Given a step"), std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+TEST(GherkinErgonomics, LoadFeatureFileThrowsRuntimeErrorWithPathWhenFileIsMissing) {
+    const std::filesystem::path missing =
+        std::filesystem::temp_directory_path() / "babybehave_this_file_does_not_exist.feature";
+    std::filesystem::remove(missing); // guarantee absence
+    try {
+        (void)LoadFeatureFile(missing);
+        FAIL() << "Expected std::runtime_error";
+    } catch (const std::runtime_error& e) {
+        EXPECT_NE(std::string(e.what()).find(missing.string()), std::string::npos);
+    }
+}
+
+// ---------------------------------------------------------------------
+// FeatureRun / Feature() / FeatureFromFile() - fluent builder wrapping a
+// single RunFeature() call. FeatureRun OWNS a std::string copy of the
+// feature text (unlike RunFeature() itself, which stays a zero-copy
+// std::string_view), specifically so a temporary (e.g. LoadFeatureFile()'s
+// return value) can be passed safely with no dangling risk.
+// ---------------------------------------------------------------------
+
+TEST(GherkinErgonomics, FeatureBuilderRunsAPassingScenarioWithDefaults) {
+    StepRegistry registry;
+    registry.RegisterGiven("a step", [](TestContext&) -> bool { return true; });
+
+    const FeatureResult result = Feature(R"FEATURE(
+Feature: FeatureRun defaults
+  Scenario: one
+    Given a step
+)FEATURE",
+                                           registry)
+                                      .Run();
+
+    EXPECT_TRUE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 1u);
+}
+
+TEST(GherkinErgonomics, FeatureBuilderLabelOnFailureAndParallelAllReachRunFeature) {
+    StepRegistry registry;
+    registry.RegisterGiven("a valid card", [](TestContext&) -> bool { return true; });
+    registry.RegisterWhen("I charge a negative amount", [](TestContext&) -> bool { return false; });
+
+    std::mutex collectedMutex;
+    std::vector<std::string> collected;
+    const GherkinFailureCallback collectFailure = [&](std::string_view message) {
+        const std::lock_guard<std::mutex> guard(collectedMutex);
+        collected.emplace_back(message);
+    };
+
+    const FeatureResult result = Feature(R"FEATURE(
+Feature: FeatureRun forwards its configuration
+  Scenario: One failure must not stop the rest
+    Given a valid card
+    When I charge a negative amount
+
+  Scenario: A second, unrelated scenario
+    Given a valid card
+)FEATURE",
+                                           registry)
+                                      .Label("feature-run-forwarding.feature")
+                                      .OnFailure(collectFailure)
+                                      .Parallel(true) // Safe here: collectFailure is mutex-guarded, never exits.
+                                      .Run();
+
+    // Label reached RunFeature: the collected failure message is tagged
+    // with our custom label, not the "<feature>" default.
+    ASSERT_EQ(collected.size(), 1u);
+    EXPECT_NE(collected[0].find("feature-run-forwarding.feature:"), std::string::npos) << collected[0];
+
+    // OnFailure reached RunFeature (non-exiting): both scenarios ran and
+    // are present in the result, proving RunFeature continued instead of
+    // exiting on the first failure.
+    EXPECT_FALSE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 2u);
+    EXPECT_FALSE(result.scenarioResults[0].allPassed);
+    EXPECT_TRUE(result.scenarioResults[1].allPassed);
+}
+
+TEST(GherkinErgonomics, FeatureRunDefaultLabelMatchesRunFeatureDefault) {
+    StepRegistry registry;
+    registry.RegisterGiven("always fails", [](TestContext&) -> bool { return false; });
+
+    std::vector<std::string> collected;
+    const FeatureResult result = Feature(R"FEATURE(
+Feature: Default label check
+  Scenario: fails
+    Given always fails
+)FEATURE",
+                                           registry)
+                                      .OnFailure([&collected](std::string_view msg) { collected.emplace_back(msg); })
+                                      .Run();
+
+    EXPECT_FALSE(result.allPassed);
+    ASSERT_EQ(collected.size(), 1u);
+    // "<feature>" is RunFeature()'s own default featureLabel - proves
+    // FeatureRun's default Label matches it exactly (no location suffix
+    // at all would look different, e.g. a bare "<feature>:3:5" substring).
+    EXPECT_NE(collected[0].find("<feature>:"), std::string::npos) << collected[0];
+}
+
+TEST(GherkinErgonomicsDeathTest, FeatureBuilderDefaultOnFailureStillExitsOnFailure) {
+    EXPECT_EXIT(
+        {
+            StepRegistry registry;
+            registry.RegisterGiven("always fails", [](TestContext&) -> bool { return false; });
+            const FeatureResult unreachable = Feature(R"FEATURE(
+Feature: Default onFailure still exits
+  Scenario: fails
+    Given always fails
+)FEATURE",
+                                                          registry)
+                                                    .Run();
+            (void)unreachable;
+        },
+        ::testing::ExitedWithCode(EXIT_FAILURE),
+        "");
+}
+
+TEST(GherkinErgonomics, FeatureFromFileLoadsAndRunsARealFeatureFileAndDefaultsItsLabelToThePath) {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "babybehave_feature_from_file_test.feature";
+    {
+        std::ofstream out(path);
+        out << "Feature: FeatureFromFile test\n"
+               "  Scenario: one\n"
+               "    Given a step from file\n";
+    }
+
+    StepRegistry registry;
+    registry.RegisterGiven("a step from file", [](TestContext&) -> bool { return true; });
+
+    const FeatureResult result = FeatureFromFile(path, registry).Run();
+    EXPECT_TRUE(result.allPassed);
+    ASSERT_EQ(result.scenarioResults.size(), 1u);
+
+    std::filesystem::remove(path);
 }

@@ -3,31 +3,40 @@
 using namespace BabyBehave::BDD;
 using namespace BabyBehave::BDD::Gherkin;
 
+namespace {
+
+constexpr Key<int> kCounter{"counter"};
+
+bool GivenSimpleCounter(TestContext& ctx) {
+    ctx.Set(kCounter, 0);
+    return true;
+}
+
+bool WhenIncrementCounter(TestContext& ctx) {
+    ctx.Mutate(kCounter) += 1;
+    return true;
+}
+
+bool WhenIncrementCounterTimes(TestContext& ctx, int times) {
+    ctx.Mutate(kCounter) += times;
+    return true;
+}
+
+bool ThenCounterShouldBe(TestContext& ctx, int expected) {
+    return ctx.Get(kCounter) == expected;
+}
+
+} // namespace
+
 int main() {
     StepRegistry registry;
 
     // Shared step definitions
-    registry.RegisterGiven("a simple counter", [](TestContext& ctx) -> bool {
-        ctx.Set("counter", 0);
-        return true;
-    });
-
-    registry.RegisterWhen("I increment the counter", [](TestContext& ctx) -> bool {
-        int value = ctx.Get<int>("counter");
-        ctx.Set("counter", value + 1);
-        return true;
-    });
-
-    registry.RegisterWhen("I increment the counter {int} times", [](TestContext& ctx, int times) -> bool {
-        int value = ctx.Get<int>("counter");
-        ctx.Set("counter", value + times);
-        return true;
-    });
-
-    registry.RegisterThen("the counter should be {int}", [](TestContext& ctx, int expected) -> bool {
-        int value = ctx.Get<int>("counter");
-        return value == expected;
-    });
+    registry.RegisterSteps(
+        StepEntry{Keyword::Given, "a simple counter", GivenSimpleCounter},
+        StepEntry{Keyword::When, "I increment the counter", WhenIncrementCounter},
+        StepEntry{Keyword::When, "I increment the counter {int} times", WhenIncrementCounterTimes},
+        StepEntry{Keyword::Then, "the counter should be {int}", ThenCounterShouldBe});
 
     const std::string_view feature = R"feature(
 Feature: Counter with background
@@ -44,6 +53,6 @@ Feature: Counter with background
     Then the counter should be 4
 )feature";
 
-    const auto result = RunFeature(feature, registry, "examples/GherkinBackground.cpp");
-    return result.allPassed ? 0 : 1;
+    const auto result = Feature(std::string(feature), registry).Label("examples/GherkinBackground.cpp").Run();
+    return result.ExitCode();
 }

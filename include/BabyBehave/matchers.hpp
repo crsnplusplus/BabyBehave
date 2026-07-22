@@ -3,29 +3,16 @@
 
 #pragma once
 
-// Small, standalone, dependency-free fluent-matcher/assertion helper.
-//
-// BabyBehave step bodies are plain `bool(TestContext&)` functions: a step
-// returns true/false, and on false bdd.hpp only reports a generic label
-// ("Precondition failed", "Postcondition failed", ...) with no detail about
-// *what* was actually wrong. This header is an OPTIONAL helper consumers can
-// call from inside their own step bodies to get a fluent comparison syntax
-// plus a descriptive actual-vs-expected message on std::cerr when a check
-// fails - without requiring any change to bdd.hpp itself. It has no include
-// on bdd.hpp and no knowledge of TestContext/BabyBehaveTest; it is just as
-// usable outside BabyBehave entirely.
-//
-// Typical use inside a step:
-//
+// Optional fluent-matcher helper for step assertions. Step bodies return
+// bool; on false, bdd.hpp only reports a generic label ("Precondition failed",
+// etc). This header adds descriptive actual-vs-expected messages to std::cerr.
+// Standalone, no dependency on bdd.hpp/TestContext. Example:
 //   bool AlarmWillRing(TestContext& context) {
 //       auto alarmClock = context.Get<std::shared_ptr<AlarmClock>>("AlarmClock");
 //       return BabyBehave::Matchers::Expect(alarmClock->GetHour()).ToEqual(7);
 //   }
-//
-// On failure this prints something like:
-//   Expect(...) failed: expected 6 to equal 7
-// to std::cerr, then returns false, which bdd.hpp's existing step-failure
-// machinery picks up exactly as it would any other `return false;`.
+// On failure: prints "Expect(...) failed: expected 6 to equal 7" to std::cerr,
+// then returns false.
 
 #include <algorithm>
 #include <iostream>
@@ -40,18 +27,13 @@ namespace BabyBehave::Matchers {
 
     namespace detail {
 
-        // Always-false trap for static_assert inside `if constexpr` chains
-        // (a bare `static_assert(false, ...)` would fire even on branches
-        // that are never instantiated; this defers evaluation to
-        // instantiation time, the same trick used elsewhere for this
-        // problem).
+        // Always-false trap for static_assert in `if constexpr` chains
+        // (defers evaluation to instantiation time, avoiding false positives).
         template<typename>
         inline constexpr bool always_false_v = false;
 
-        // Detects whether `os << value` is well-formed for T, so PrintValue
-        // below can fall back to a placeholder instead of failing to
-        // compile for non-streamable types (e.g. a plain struct with no
-        // operator<<).
+        // Detects whether `os << value` is well-formed for T;
+        // PrintValue falls back to placeholder for non-streamable types.
         template<typename T, typename = void>
         struct is_streamable : std::false_type {};
 
@@ -125,13 +107,10 @@ namespace BabyBehave::Matchers {
 
     } // namespace detail
 
-    // Fluent wrapper returned by Expect(value). Every ToXxx() method returns
-    // bool (so it can be used directly as a step's `return ...;`) and, on
-    // failure, writes a descriptive "expected ... to ... " message to
-    // std::cerr showing the actual value (and the expected one, where
-    // applicable) before returning false. Values that aren't
-    // stream-insertable print as "(non-printable value)" instead of failing
-    // to compile.
+    // Fluent wrapper returned by Expect(value). ToXxx() methods return bool
+    // (usable as step return) and write descriptive "expected ... to ..."
+    // messages to std::cerr on failure. Non-streamable values print as
+    // "(non-printable value)".
     template<typename T>
     class Expectation {
     public:
@@ -308,9 +287,8 @@ namespace BabyBehave::Matchers {
         T m_value;
     };
 
-    // Entry point. Deduces and decay-copies the value into an Expectation<T>
-    // wrapper; chain one of the ToXxx() methods above on the result, e.g.
-    //   Expect(alarmClock->GetHour()).ToEqual(7)
+    // Entry point. Deduces and wraps value into Expectation<T>;
+    // chain ToXxx() method (e.g., Expect(val).ToEqual(7)).
     template<typename T>
     Expectation<std::decay_t<T>> Expect(T&& value) {
         return Expectation<std::decay_t<T>>(std::forward<T>(value));

@@ -13,6 +13,74 @@ section further down, predates the adoption of git tagging for BabyBehave
 releases; see the note at the bottom of that `[0.7.19]` section for how it
 relates to `[0.9.0]`.
 
+## [0.9.1] - 2026-07-22
+
+### Added
+
+- Ergonomic `TestContext` mutations for in-place object modification:
+  `Mutate<T>(key)` returns a live reference into stored values (avoiding
+  copy-mutate-writeback ceremony for large objects), and `GetOrInit<T>(key,
+  init)` lazily initializes values on first access. Both support string-keyed
+  and `Key<T>`-keyed (typed-key) variants for consistency with existing
+  `Get<T>`/`Set<T>`. **Important:** these methods are not Gherkin-specific —
+  they work with the fluent `Given`/`With`/`When`/`Then` API and everywhere
+  else `TestContext` is used.
+- `Key<T>` public alias for `TestContext::ContextKey<T>` for brevity when
+  declaring typed context keys.
+- Bulk declarative step registration via `StepRegistry::RegisterStep()` and
+  `RegisterSteps()` (accepting `StepEntry<F>` structures) with the public
+  `Gherkin::Keyword` enum (`Given`, `When`, `Then`, `And`, `Or`, `But`) for
+  naming steps. Supports PascalCase naming convention for non-trivial step
+  functions and inline lambdas for trivial ones, improving readability when
+  domains have 10+ steps per registry.
+- `StepRegistry::AddAroundHook(tags, before, after)` and
+  `AddAroundHookExpr(expression, before, after)` for registering Before+After
+  hook pairs in one call instead of two separate registrations.
+- Builder-style feature execution via `Gherkin::FeatureRun` class:
+  `Feature(text, registry)` and `FeatureFromFile(path, registry)` return a
+  builder offering `.Label()`, `.OnFailure()`, `.EnableParallelScenarios()`,
+  and `.Run()` methods for named-parameter ergonomics, complementing the
+  pre-existing positional `RunFeature()` API.
+- `Gherkin::LoadFeatureFile(path)` — a plain filesystem-loading utility
+  returning a `std::string`, distinct from the example-only helper in
+  `examples/gherkin/LoadFeatureFile.hpp` (which uses CMake-define-based path
+  resolution for example `.feature` files).
+- `FeatureResult::ExitCode()` returns a portable exit code (0 if
+  `allPassed`, non-zero otherwise) for test runners that defer exit-code
+  decision to after inspecting results.
+- `Gherkin::CollectingFailureHandler` — a thread-safe failure-message
+  collector that appends to a `std::vector<std::string>` instead of exiting,
+  useful for scenarios that want to gather all failures before deciding on
+  exit behavior.
+- **Parse-error reporting enhancement (non-breaking):** Structural parse
+  errors across an entire `.feature` file are now ALL collected and reported
+  in one pass (one `onFailure` call per error, format `"<file>:<line>: parse
+  error: <message>"`) instead of stopping at the first one. The hard invariant
+  is unchanged: if ANY structural error exists, ZERO scenarios execute.
+  Error recovery is now more sophisticated (point errors, corruptive errors
+  with resync, and intermediate errors with partial skipping) to avoid
+  cascading bogus errors from corrupted parse state.
+- **Scenario-failure reporting enhancement (non-breaking):** Scenario failure
+  messages are now a single concise line
+  (`"<file>:<scenarioLine>: scenario failed: '<name>' - K/N step(s) failed,
+  first: [<stepLabel>] <stepName>: <message> (at <location>)"`) instead of a
+  multi-line enumeration. Full per-step detail remains completely available
+  via `FeatureResult::scenarioResults[i].steps` — the digest is only what
+  reaches the `onFailure` callback, making it easier to skim failure
+  summaries in large test runs.
+- Fixed an inaccurate comment in `.github/workflows/ci.yml` (lines 226–231)
+  claiming that Gherkin example binaries are "ctest-registered" — they are
+  actually run via a plain shell loop with an allow-list of expected-to-fail
+  binaries.
+
+### Changed
+
+- (none — this is an additive, non-breaking release)
+
+### Fixed
+
+- (none)
+
 ## [0.9.0] - 2026-07-21
 
 ### Added
