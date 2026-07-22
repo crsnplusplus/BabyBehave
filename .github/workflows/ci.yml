@@ -261,7 +261,12 @@ jobs:
         run: cmake -B build/bb-debug -DBABYBEHAVE_ENABLE_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build
-        run: cmake --build build/bb-debug -j
+        # Bare -j (unlike every other job's Build step) would let make launch
+        # one compile per ready target regardless of core count; ASan+UBSan
+        # instrumentation's per-TU memory cost is high enough across this
+        # many Gherkin example/test binaries that unbounded parallelism OOMs
+        # the runner, so this job needs an explicit cap the others don't.
+        run: cmake --build build/bb-debug -j "$CMAKE_BUILD_PARALLEL_LEVEL"
 
       - name: Test
         run: ctest --test-dir build/bb-debug --output-on-failure
