@@ -226,10 +226,10 @@ jobs:
       - name: Run Gherkin example binaries
         # The Gherkin example binaries (examples/example_Gherkin*.cpp and
         # examples/gherkin/example_Gherkin*.cpp) are built and should run to
-        # completion without assertion failures. They are ctest-registered,
-        # so the Test step above exercises them, but running them again here
-        # directly verifies no additional binary issues under the Gherkin
-        # path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
+        # completion without assertion failures. Unlike unit tests, these example
+        # binaries are NOT ctest-registered; they are run here via a plain shell
+        # loop with an allow-list of expected-to-fail binaries. Running them here
+        # directly verifies no additional binary issues under the Gherkin path. example_GherkinUnmatchedStep, example_GherkinCollectFailures,
         # example_GherkinCustomFailureHandler, and
         # example_GherkinBakeryLateCancellation are deliberate "demonstrate a
         # realistic failure path" demos (they intentionally exit non-zero -
@@ -268,16 +268,19 @@ jobs:
 
       - name: Run example binaries under sanitizers
         # The example binaries aren't ctest-registered, so run them directly
-        # to catch ASan/UBSan regressions they'd otherwise hide. example_Failing
-        # is a deliberate "this scenario fails" demo (it intentionally exits
-        # non-zero); every other example is expected to exit cleanly.
+        # to catch ASan/UBSan regressions they'd otherwise hide. example_Failing,
+        # example_GherkinUnmatchedStep, example_GherkinCollectFailures,
+        # example_GherkinCustomFailureHandler, and
+        # example_GherkinBakeryLateCancellation are deliberate "demonstrate a
+        # realistic failure path" demos (they intentionally exit non-zero); every
+        # other example is expected to exit cleanly.
         run: |
           set -e
           for exe in build/bb-debug/examples/example_*; do
             [ -x "$exe" ] || continue
             name=$(basename "$exe")
             echo "--- running $name ---"
-            if [ "$name" = "example_Failing" ]; then
+            if [ "$name" = "example_Failing" ] || [ "$name" = "example_GherkinUnmatchedStep" ] || [ "$name" = "example_GherkinCollectFailures" ] || [ "$name" = "example_GherkinCustomFailureHandler" ] || [ "$name" = "example_GherkinBakeryLateCancellation" ]; then
               "$exe" || true
             else
               "$exe"

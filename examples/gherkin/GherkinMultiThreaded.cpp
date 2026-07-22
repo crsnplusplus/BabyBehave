@@ -1,15 +1,15 @@
 #include <BabyBehave/bdd.hpp>
 #include <future>
+#include <iostream>
 #include <thread>
 #include <vector>
-#include <iostream>
 
 using namespace BabyBehave::BDD;
 using namespace BabyBehave::BDD::Gherkin;
 
 // Demonstrates thread-safe Gherkin scenario execution using std::async.
-// Each thread constructs its OWN StepRegistry and runs its OWN RunFeature()
-// call with its own embedded feature text. Because there is zero shared
+// Each thread constructs its OWN StepRegistry and runs its OWN Feature(...)
+// with its own embedded feature text. Because there is zero shared
 // mutable state between scenarios, launching N of them in parallel needs
 // no locks, no atomics, no synchronization at all.
 //
@@ -18,37 +18,29 @@ using namespace BabyBehave::BDD::Gherkin;
 
 namespace {
 
+constexpr Key<int> kCounter{"counter"};
+
+bool GivenCounterAt(TestContext& ctx, int value) {
+    ctx.Set(kCounter, value);
+    return true;
+}
+
+bool WhenAddToCounter(TestContext& ctx, int value) {
+    ctx.Mutate(kCounter) += value;
+    return true;
+}
+
+bool ThenCounterEquals(TestContext& ctx, int expected) {
+    return ctx.Get(kCounter) == expected;
+}
+
 // Thread-safe helper to run a single Gherkin feature scenario
 // Each thread builds its own registry and feature text independently
 void RunCountingFeature(int threadId) {
     StepRegistry registry;
-
-    registry.RegisterGiven("a counter at {int}", [](TestContext& ctx, int value) -> bool {
-        ctx.Set("counter", value);
-        return true;
-    });
-
-    registry.RegisterWhen("I add {int}", [](TestContext& ctx, int value) -> bool {
-        int current = ctx.Get<int>("counter");
-        ctx.Set("counter", current + value);
-        return true;
-    });
-
-    registry.RegisterAnd("I add {int}", [](TestContext& ctx, int value) -> bool {
-        int current = ctx.Get<int>("counter");
-        ctx.Set("counter", current + value);
-        return true;
-    });
-
-    registry.RegisterThen("the counter equals {int}", [](TestContext& ctx, int expected) -> bool {
-        int current = ctx.Get<int>("counter");
-        return current == expected;
-    });
-
-    registry.RegisterAnd("the counter equals {int}", [](TestContext& ctx, int expected) -> bool {
-        int current = ctx.Get<int>("counter");
-        return current == expected;
-    });
+    registry.RegisterGiven("a counter at {int}", GivenCounterAt);
+    registry.RegisterStep({Keyword::When, Keyword::And}, "I add {int}", WhenAddToCounter);
+    registry.RegisterStep({Keyword::Then, Keyword::And}, "the counter equals {int}", ThenCounterEquals);
 
     // Each thread uses different feature text to verify independent execution
     std::string feature;
@@ -88,8 +80,8 @@ Feature: Counter thread 3
 )feature";
     }
 
-    std::string label = "thread-" + std::to_string(threadId);
-    const auto result = RunFeature(feature, registry, label);
+    const std::string label = "thread-" + std::to_string(threadId);
+    const auto result = Feature(std::move(feature), registry).Label(label).Run();
     if (!result.allPassed) {
         std::cerr << "Thread " << threadId << " failed!" << std::endl;
         std::exit(EXIT_FAILURE);

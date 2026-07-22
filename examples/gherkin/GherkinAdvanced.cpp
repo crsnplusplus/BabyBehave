@@ -1,7 +1,8 @@
 #include <BabyBehave/bdd.hpp>
+#include <cmath>
 #include <iostream>
+#include <string>
 #include <vector>
-#include <iomanip>
 
 using namespace BabyBehave::BDD;
 using namespace BabyBehave::BDD::Gherkin;
@@ -14,113 +15,88 @@ using namespace BabyBehave::BDD::Gherkin;
 // - And/But step connectors
 // - Realistic domain: order processing with validation and pricing
 
+namespace {
+
+constexpr double kEpsilon = 0.01;
+
+constexpr Key<std::vector<std::string>> kItems{"items"};
+constexpr Key<double> kTotalPrice{"total_price"};
+constexpr Key<double> kDiscount{"discount"};
+constexpr Key<double> kFinalPrice{"final_price"};
+
+// ---- Background: Common order setup ----
+bool GivenEmptyOrder(TestContext& ctx) {
+    ctx.Set(kItems, std::vector<std::string>{});
+    ctx.Set(kTotalPrice, 0.0);
+    ctx.Set(kDiscount, 0.0);
+    return true;
+}
+
+// ---- Item addition (When/And) ----
+bool WhenAddItemForPrice(TestContext& ctx, std::string item, double price) {
+    ctx.Mutate(kItems).push_back(item + " ($" + std::to_string(price) + ")");
+    ctx.Mutate(kTotalPrice) += price;
+    return true;
+}
+
+// ---- Discount application ----
+bool WhenApplyPercentDiscount(TestContext& ctx, int discountPercent) {
+    const double total = ctx.Get(kTotalPrice);
+    const double discountAmount = (total * discountPercent) / 100.0;
+    ctx.Set(kDiscount, discountAmount);
+    ctx.Set(kFinalPrice, total - discountAmount);
+    return true;
+}
+
+// ---- Validation (Then/And/But) ----
+bool ThenOrderShouldContainItems(TestContext& ctx, int expectedCount) {
+    return static_cast<int>(ctx.Get(kItems).size()) == expectedCount;
+}
+
+bool ThenOrderTotalShouldBe(TestContext& ctx, double expected) {
+    return std::abs(ctx.Get(kTotalPrice) - expected) < kEpsilon;
+}
+
+bool ThenFinalPriceAfterDiscountShouldBe(TestContext& ctx, double expected) {
+    return std::abs(ctx.Get(kFinalPrice) - expected) < kEpsilon;
+}
+
+bool ButOrderShouldHaveItems(TestContext& ctx, int unexpectedCount) {
+    return static_cast<int>(ctx.Get(kItems).size()) != unexpectedCount;
+}
+
+// ---- Before hook: log for @premium tag ----
+void LogPremiumOrderStart(TestContext& ctx) {
+    std::cout << "  [Before] Premium order processing started\n";
+    ctx.Set(Key<bool>{"premium_flag"}, true);
+}
+
+// ---- After hook: cleanup for all scenarios ----
+void LogOrderProcessingComplete(TestContext& ctx) {
+    std::cout << "  [After] Order processing completed\n";
+}
+
+} // namespace
+
 int main() {
     StepRegistry registry;
 
-    // ---- Background: Common order setup ----
-    registry.RegisterGiven("an empty order", [](TestContext& ctx) -> bool {
-        std::vector<std::string> items;
-        ctx.Set("items", items);
-        ctx.Set("total_price", 0.0);
-        ctx.Set("discount", 0.0);
-        return true;
-    });
+    registry.RegisterGiven("an empty order", GivenEmptyOrder);
+    registry.RegisterStep({Keyword::When, Keyword::And}, "I add a {word} for {float}", WhenAddItemForPrice);
+    registry.RegisterStep({Keyword::When, Keyword::And}, "I apply a {int} percent discount", WhenApplyPercentDiscount);
+    registry.RegisterStep({Keyword::Then, Keyword::And}, "the order should contain {int} items", ThenOrderShouldContainItems);
+    registry.RegisterStep({Keyword::Then, Keyword::And}, "the order total should be {float}", ThenOrderTotalShouldBe);
+    registry.RegisterStep(
+        {Keyword::Then, Keyword::And}, "the final price after discount should be {float}", ThenFinalPriceAfterDiscountShouldBe);
+    registry.RegisterBut("the order should have {int} items", ButOrderShouldHaveItems);
 
-    // ---- Item addition (Given/When/And) ----
-    registry.RegisterWhen("I add a {word} for {float}", [](TestContext& ctx, std::string item, double price) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        items.push_back(item + " ($" + std::to_string(price) + ")");
-        ctx.Set("items", items);
-
-        double total = ctx.Get<double>("total_price");
-        ctx.Set("total_price", total + price);
-        return true;
-    });
-
-    registry.RegisterAnd("I add a {word} for {float}", [](TestContext& ctx, std::string item, double price) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        items.push_back(item + " ($" + std::to_string(price) + ")");
-        ctx.Set("items", items);
-
-        double total = ctx.Get<double>("total_price");
-        ctx.Set("total_price", total + price);
-        return true;
-    });
-
-    // ---- Discount application ----
-    registry.RegisterWhen("I apply a {int} percent discount", [](TestContext& ctx, int discountPercent) -> bool {
-        double total = ctx.Get<double>("total_price");
-        double discountAmount = (total * discountPercent) / 100.0;
-        ctx.Set("discount", discountAmount);
-        ctx.Set("final_price", total - discountAmount);
-        return true;
-    });
-
-    registry.RegisterAnd("I apply a {int} percent discount", [](TestContext& ctx, int discountPercent) -> bool {
-        double total = ctx.Get<double>("total_price");
-        double discountAmount = (total * discountPercent) / 100.0;
-        ctx.Set("discount", discountAmount);
-        ctx.Set("final_price", total - discountAmount);
-        return true;
-    });
-
-    // ---- Validation (Then/And/But) ----
-    registry.RegisterThen("the order should contain {int} items", [](TestContext& ctx, int expectedCount) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        return static_cast<int>(items.size()) == expectedCount;
-    });
-
-    registry.RegisterAnd("the order should contain {int} items", [](TestContext& ctx, int expectedCount) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        return static_cast<int>(items.size()) == expectedCount;
-    });
-
-    registry.RegisterThen("the order total should be {float}", [](TestContext& ctx, double expected) -> bool {
-        double total = ctx.Get<double>("total_price");
-        const double epsilon = 0.01;
-        return std::abs(total - expected) < epsilon;
-    });
-
-    registry.RegisterAnd("the order total should be {float}", [](TestContext& ctx, double expected) -> bool {
-        double total = ctx.Get<double>("total_price");
-        const double epsilon = 0.01;
-        return std::abs(total - expected) < epsilon;
-    });
-
-    registry.RegisterThen("the final price after discount should be {float}", [](TestContext& ctx, double expected) -> bool {
-        double final_price = ctx.Get<double>("final_price");
-        const double epsilon = 0.01;
-        return std::abs(final_price - expected) < epsilon;
-    });
-
-    registry.RegisterAnd("the final price after discount should be {float}", [](TestContext& ctx, double expected) -> bool {
-        double final_price = ctx.Get<double>("final_price");
-        const double epsilon = 0.01;
-        return std::abs(final_price - expected) < epsilon;
-    });
-
-    registry.RegisterBut("the order should have {int} items",
-        [](TestContext& ctx, int unexpectedCount) -> bool {
-        auto items = ctx.Get<std::vector<std::string>>("items");
-        return static_cast<int>(items.size()) != unexpectedCount;
-    });
-
-    // ---- Before hook: log for @premium tag ----
-    registry.AddBeforeHook(
-        {"premium"},
-        [](TestContext& ctx) {
-            std::cout << "  [Before] Premium order processing started\n";
-            ctx.Set("premium_flag", true);
-        }
-    );
-
-    // ---- After hook: cleanup for all scenarios ----
-    registry.AddAfterHook(
-        {},
-        [](TestContext& ctx) {
-            std::cout << "  [After] Order processing completed\n";
-        }
-    );
+    // Before/After hooks below use DIFFERENT tag filters ({"premium"} vs
+    // the empty/always-run filter) - AddAroundHook only applies when a
+    // Before+After pair shares one tag filter, so these stay as two
+    // separate registrations, each still demonstrating its own concept
+    // (tag-scoped setup vs. unconditional cleanup).
+    registry.AddBeforeHook({"premium"}, LogPremiumOrderStart);
+    registry.AddAfterHook({}, LogOrderProcessingComplete);
 
     const std::string_view feature = R"feature(
 Feature: Order processing with discounts and validation
@@ -151,6 +127,6 @@ Feature: Order processing with discounts and validation
     And the order total should be 10.74
 )feature";
 
-    const auto result = RunFeature(feature, registry, "examples/GherkinAdvanced.cpp");
-    return result.allPassed ? 0 : 1;
+    const auto result = Feature(std::string(feature), registry).Label("examples/GherkinAdvanced.cpp").Run();
+    return result.ExitCode();
 }

@@ -4,38 +4,50 @@
 using namespace BabyBehave::BDD;
 using namespace BabyBehave::BDD::Gherkin;
 
+namespace {
+
+constexpr Key<int> kTestValue{"test_value"};
+
+bool GivenTestValue(TestContext& ctx, int value) {
+    ctx.Set(kTestValue, value);
+    std::cout << "  [Given] Set test value to " << value << std::endl;
+    return true;
+}
+
+bool WhenExpectItToEqual(TestContext& ctx, int expected) {
+    const int value = ctx.Get(kTestValue);
+    const bool passes = (value == expected);
+    if (passes) {
+        std::cout << "  [When] Value matches " << expected << std::endl;
+    } else {
+        std::cout << "  [When] Value " << value << " does not match " << expected << std::endl;
+    }
+    return passes;
+}
+
+bool ThenVerifyTheValueAgain(TestContext& ctx) {
+    // This step always passes - to show that subsequent steps still run
+    // even after an earlier step failed
+    std::cout << "  [Then] Verifying value (this runs even after failure)" << std::endl;
+    return true;
+}
+
+bool AndDoubleCheckTheValue(TestContext& ctx) {
+    // This also runs, demonstrating that all steps run despite the failure
+    std::cout << "  [And] Double-checking (And step after failure)" << std::endl;
+    return true;
+}
+
+} // namespace
+
 int main() {
     StepRegistry registry;
 
-    registry.RegisterGiven("a test value {int}", [](TestContext& ctx, int value) -> bool {
-        ctx.Set("test_value", value);
-        std::cout << "  [Given] Set test value to " << value << std::endl;
-        return true;
-    });
-
-    registry.RegisterWhen("I expect it to equal {int}", [](TestContext& ctx, int expected) -> bool {
-        int value = ctx.Get<int>("test_value");
-        bool passes = (value == expected);
-        if (passes) {
-            std::cout << "  [When] Value matches " << expected << std::endl;
-        } else {
-            std::cout << "  [When] Value " << value << " does not match " << expected << std::endl;
-        }
-        return passes;
-    });
-
-    registry.RegisterThen("I verify the value again", [](TestContext& ctx) -> bool {
-        // This step always passes - to show that subsequent steps still run
-        // even after an earlier step failed
-        std::cout << "  [Then] Verifying value (this runs even after failure)" << std::endl;
-        return true;
-    });
-
-    registry.RegisterAnd("I double-check the value", [](TestContext& ctx) -> bool {
-        // This also runs, demonstrating that all steps run despite the failure
-        std::cout << "  [And] Double-checking (And step after failure)" << std::endl;
-        return true;
-    });
+    registry.RegisterSteps(
+        StepEntry{Keyword::Given, "a test value {int}", GivenTestValue},
+        StepEntry{Keyword::When, "I expect it to equal {int}", WhenExpectItToEqual},
+        StepEntry{Keyword::Then, "I verify the value again", ThenVerifyTheValueAgain},
+        StepEntry{Keyword::And, "I double-check the value", AndDoubleCheckTheValue});
 
     const std::string_view feature = R"feature(
 Feature: Collect failures to see all step outcomes
@@ -54,8 +66,9 @@ Feature: Collect failures to see all step outcomes
     std::cout << "  - Full results collected before scenario failure\n" << std::endl;
 
     // This will call exit(EXIT_FAILURE) after collecting all step results
-    const auto result = RunFeature(feature, registry, "examples/GherkinCollectFailures.cpp");
+    // (default onFailure - unchanged).
+    const auto result = Feature(std::string(feature), registry).Label("examples/GherkinCollectFailures.cpp").Run();
 
-    // This code never executes - RunFeature exits after scenario failure
-    return result.allPassed ? 0 : 1;
+    // This code never executes - the default onFailure exits after scenario failure
+    return result.ExitCode();
 }

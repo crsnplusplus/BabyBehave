@@ -42,6 +42,8 @@
 #include <charconv>
 #include <chrono>
 #include <concepts>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <mutex>
 #include <optional>
@@ -53,10 +55,10 @@
 namespace BabyBehave::BDD {
 
     namespace detail {
-        // Cheaper than std::endl (no forced flush).
+        // Cheaper than std::endl (no flush).
         inline constexpr char kNewLine = '\n';
 
-        // Runtime toggle for narration via BABYBEHAVE_QUIET env var.
+        // Runtime toggle for narration (controlled via BABYBEHAVE_QUIET env var).
         inline bool& NarrationEnabledFlag() {
             static bool enabled = [] {
                 const char* env = std::getenv("BABYBEHAVE_QUIET");
@@ -87,7 +89,7 @@ namespace BabyBehave::BDD {
 #endif
         }
 
-        // Print diagnostic to std::cerr, respecting NarrationEnabledFlag.
+        // Print diagnostic to std::cerr (respects NarrationEnabledFlag).
         inline void PrintErrorLine(const std::string& text) {
             if (!NarrationEnabledFlag()) {
                 return;
@@ -95,16 +97,15 @@ namespace BabyBehave::BDD {
             std::cerr << text << kNewLine;
         }
 
-        // Plain (live), Arrow/Tree (buffered, rendered at Execute's end).
+        // Plain (live) vs Arrow/Tree (buffered, rendered at Execute's end).
         enum class NarrationStyle : std::uint8_t {
             Plain,
             Arrow,
             Tree,
         };
 
-        // Maps BABYBEHAVE_STYLE to NarrationStyle ("plain"/"arrow"/"tree",
-        // case-sensitive; defaults to Plain). Pulled out as a pure function
-        // for coverage: each of four cases becomes one direct test call.
+        // Maps BABYBEHAVE_STYLE env var to NarrationStyle (defaults to Plain).
+        // Pure function for test coverage (each case gets direct test call).
         constexpr NarrationStyle ParseNarrationStyleEnv(const char* env) {
             if (env == nullptr) {
                 return NarrationStyle::Plain;
@@ -119,13 +120,13 @@ namespace BabyBehave::BDD {
             return NarrationStyle::Plain;
         }
 
-        // Cached from BABYBEHAVE_STYLE, overrideable via SetNarrationStyle().
+        // Cached from BABYBEHAVE_STYLE env var, overrideable via SetNarrationStyle().
         inline NarrationStyle& NarrationStyleFlag() {
             static NarrationStyle style = ParseNarrationStyleEnv(std::getenv("BABYBEHAVE_STYLE"));
             return style;
         }
 
-        // Step types for Arrow/Tree renderers. Given is stored in m_testName.
+        // Step types for Arrow/Tree renderers (Given stored in m_testName).
         enum class StepKindTag : std::uint8_t {
             With,
             When,
@@ -135,15 +136,14 @@ namespace BabyBehave::BDD {
             But,
         };
 
-        // Detail steps nest one level under primary steps (With under GIVEN;
-        // And/Or/But under THEN); Tree nests, Arrow marks with "+".
+        // Detail steps nest under primary: With under GIVEN, And/Or/But under
+        // THEN. Arrow marks with "+", Tree nests.
         constexpr bool IsNarrationDetailKind(StepKindTag kind) {
             return kind == StepKindTag::With || kind == StepKindTag::And ||
                    kind == StepKindTag::Or || kind == StepKindTag::But;
         }
 
-        // std::unreachable() after exhaustive switch: falling off is genuinely
-        // impossible, not just unhandled; a defensive return would be uncoverable.
+        // Exhaustive switch; std::unreachable() means this is unreachable (not just unhandled).
         constexpr std::string_view ArrowKindWord(StepKindTag kind) {
             switch (kind) {
                 case StepKindTag::With: return "With";
@@ -168,13 +168,13 @@ namespace BabyBehave::BDD {
             std::unreachable();
         }
 
-        // One step buffered by NarrateStep() for Arrow/Tree rendering.
+        // Single step buffered for Arrow/Tree rendering.
         struct NarrationStepEntry {
             StepKindTag kind;
             std::string name;
         };
 
-        // lines is never empty; builds result by concatenating with newlines.
+        // Joins lines with newlines (lines is never empty).
         inline std::string JoinNarrationLines(const std::vector<std::string>& lines) {
             std::string result = lines.front();
             for (auto it = std::next(lines.begin()); it != lines.end(); ++it) {
@@ -184,7 +184,7 @@ namespace BabyBehave::BDD {
             return result;
         }
 
-        // "-> Given a: X" / "    + With: Y" / etc. (Detail steps get "+", primary get "->").
+        // Renders "-> Given a: X" / "    + With: Y" etc (details get "+", primary "->").
         inline std::string RenderArrow(const std::string& testName, const std::vector<NarrationStepEntry>& steps, bool passed) {
             std::vector<std::string> lines;
             lines.push_back(std::string(passed ? "[ OK ] " : "[ FAIL ] ") + testName);
@@ -200,34 +200,34 @@ namespace BabyBehave::BDD {
             return JoinNarrationLines(lines);
         }
 
-        // Left-justifies to fixed width (7 chars) so all step names align.
+        // Left-justifies to 7 chars for alignment.
         inline std::string PadTreeLabel(std::string_view label) {
             constexpr std::size_t kFieldWidth = 7;
             return label.size() < kFieldWidth ? std::string(label) + std::string(kFieldWidth - label.size(), ' ')
                                                : std::string(label);
         }
 
-        // Unicode glyphs as \u escapes for portable encoding (vs literal UTF-8).
-        inline constexpr std::string_view kTreeCheckMark = "\u2713";         // CHECK MARK
-        inline constexpr std::string_view kTreeCrossMark = "\u2717";        // BALLOT X
-        inline constexpr std::string_view kTreeVerticalBar = "\u2502";      // BOX DRAWINGS LIGHT VERTICAL
-        inline constexpr std::string_view kTreeBranchMid = "\u251c\u2500 "; // VERTICAL-AND-RIGHT, HORIZONTAL, space
-        inline constexpr std::string_view kTreeBranchLast = "\u2570\u2500 "; // ARC-UP-AND-RIGHT, HORIZONTAL, space
+        // Unicode glyphs as \u escapes (for portable encoding).
+        inline constexpr std::string_view kTreeCheckMark = "\u2713";         // \u2713 CHECK MARK
+        inline constexpr std::string_view kTreeCrossMark = "\u2717";        // \u2717 BALLOT X
+        inline constexpr std::string_view kTreeVerticalBar = "\u2502";      // \u2502 VERTICAL
+        inline constexpr std::string_view kTreeBranchMid = "\u251c\u2500 "; // \u251c\u2500 BRANCH MID
+        inline constexpr std::string_view kTreeBranchLast = "\u2570\u2500 "; // \u2514\u2500 BRANCH LAST
 
-        // Tree continuation prefix: "   " if isLast, else vertical bar + two spaces.
+        // Continuation prefix: "   " if last, else vertical bar + spaces.
         inline std::string TreeContinuation(bool isLast) {
             return isLast ? "   " : std::string(kTreeVerticalBar) + "  ";
         }
 
-        // Top-level branch (WHEN or THEN); THEN may have And/Or/But children.
+        // Top-level branch (WHEN/THEN); THEN may have And/Or/But children.
         struct TreeBranch {
             std::string_view label;
             const std::string* name;
             const std::vector<const NarrationStepEntry*>* children;
         };
 
-        // Appends indented box-drawing lines for each child (WITH or And/Or/But).
-        // Last child gets arc-corner glyph; others get tee glyph.
+        // Appends indented box-drawing lines for children (WITH/And/Or/But).
+        // Last child gets arc-corner, others get tee glyph.
         inline void AppendTreeChildLines(std::vector<std::string>& lines, std::string_view indent,
                                           const std::string& continuation,
                                           const std::vector<const NarrationStepEntry*>& children) {
@@ -243,8 +243,8 @@ namespace BabyBehave::BDD {
             }
         }
 
-        // Unicode tree: GIVEN/WHEN/THEN top-level siblings; WITH nests under
-        // GIVEN; And/Or/But nest under last THEN (or promoted to top-level).
+        // Unicode tree: GIVEN/WHEN/THEN siblings; WITH under GIVEN;
+        // And/Or/But under last THEN (or promoted to top-level).
         inline std::string RenderTree(const std::string& testName, const std::vector<NarrationStepEntry>& steps, bool passed) {
             static constexpr std::string_view kIndent = "  ";
             static const std::vector<const NarrationStepEntry*> kNoChildren;
@@ -304,7 +304,7 @@ namespace BabyBehave::BDD {
         }
 
 #if defined(__cpp_lib_source_location)
-        // Formats source_location as "file:line" for diagnostics.
+        // Formats source_location as "file:line".
         inline std::string FormatLocation(const std::source_location& loc) {
             std::string result(loc.file_name());
             result += ':';
@@ -312,8 +312,7 @@ namespace BabyBehave::BDD {
             return result;
         }
 
-        // Consolidates source_location capture across call sites (replaces
-        // duplicated #if blocks in constructor/AddStep/GivenAImpl).
+        // Consolidates source_location capture (replaces #if duplication).
         inline std::string CaptureLocationOrEmpty(const std::source_location& loc) {
             return FormatLocation(loc);
         }
@@ -328,7 +327,7 @@ namespace BabyBehave::BDD {
         template<typename>
         inline constexpr bool kAlwaysFalseStepType = false;
 
-        // Step-type labels (used as both StepResult::stepLabel and exception callback labels).
+        // Step-type labels (used as StepResult::stepLabel and exception callback labels).
         inline constexpr std::string_view kPreconditionLabel = "Precondition";
         inline constexpr std::string_view kActionLabel = "Action";
         inline constexpr std::string_view kPostconditionLabel = "Postcondition";
@@ -337,13 +336,10 @@ namespace BabyBehave::BDD {
         inline constexpr std::string_view kButLabel = "But";
         inline constexpr std::string_view kContextSetupLabel = "ContextSetup";
 
-        // Message for catch-all (...) exception handler.
         inline constexpr std::string_view kUnknownExceptionMessage = "unknown non-std::exception type thrown";
-
-        // Context-setup exception prefix (used in both exception handlers).
         inline constexpr std::string_view kContextSetupExceptionPrefix = "Exception caught in Context Setup: ";
 
-        // Remaining user-facing string literals (gathered here for consistency).
+        // User-facing string literals.
         inline constexpr std::string_view kKeyNotFoundPrefix = "Key not found: ";
         inline constexpr std::string_view kGivenPrefix = "Given a: ";
         inline constexpr std::string_view kWithPrefix = "    With: ";
@@ -352,45 +348,29 @@ namespace BabyBehave::BDD {
         inline constexpr std::string_view kAndPrefix = "    And: ";
         inline constexpr std::string_view kOrPrefix = "    Or: ";
         inline constexpr std::string_view kButPrefix = "    But: ";
-        // Default onException callback prefix (distinct from context-setup failures).
         inline constexpr std::string_view kDefaultExceptionCallbackPrefix = "Exception caught in ";
         inline constexpr std::string_view kOnConditionNotVerifiedCallbackThrewMessage =
             "BabyBehave: onConditionNotVerified callback itself threw an exception; ignoring to avoid std::terminate()";
         inline constexpr std::string_view kOnExceptionCallbackThrewMessage =
             "BabyBehave: onException callback itself threw an exception; ignoring to avoid std::terminate()";
 
-        // Compile-time failure messages/exception descriptions. Passing steps
-        // pay zero allocation cost (only materialized on failure path).
-        // Groups follow executeStep() order; And/Or/But have *ConditionLabel.
-
-        // Precondition
+        // Failure messages (zero allocation cost on passing steps).
         inline constexpr std::string_view kPreconditionFailedMessage = "Precondition failed";
-
-        // Action
         inline constexpr std::string_view kActionFailedMessage = "Action failed";
-
-        // Postcondition
         inline constexpr std::string_view kPostconditionFailedMessage = "Postcondition failed";
-
-        // And
         inline constexpr std::string_view kAndConditionLabel = "And condition";
         inline constexpr std::string_view kAndConditionFailedMessage = "And condition failed";
-
-        // Or
         inline constexpr std::string_view kOrConditionLabel = "Or condition";
         inline constexpr std::string_view kOrConditionFailedMessage = "Or condition failed";
-
-        // But
         inline constexpr std::string_view kButConditionLabel = "But condition";
         inline constexpr std::string_view kButConditionFailedMessage = "But condition failed";
 
-        // Appends " (at file:line)" suffix when location is non-empty.
+        // Appends " (at file:line)" suffix if location is non-empty.
         inline std::string AppendLocationSuffix(const std::string& text, const std::string& location) {
             return location.empty() ? text : (text + " (at " + location + ")");
         }
 
-        // C++20 transparent hash for heterogeneous lookup. Lets Get() avoid
-        // materializing owning std::string for find(std::string_view).
+        // C++20 transparent hash; Get() avoids materializing std::string.
         struct TransparentStringHash {
             using is_transparent = void;
             std::size_t operator()(std::string_view sv) const noexcept {
@@ -419,16 +399,12 @@ namespace BabyBehave::BDD {
         std::string message;
     };
 
-    // NOTE: TestContext is NOT thread-safe (it is backed by a plain std::unordered_map
-    // with no internal synchronization). Consumers running scenarios in parallel (e.g.
-    // via std::async or parallel ctest) must not share a single TestContext instance
-    // across threads.
+    // NOTE: TestContext is NOT thread-safe. Parallel scenarios must not share one.
     class TestContext {
     private:
         std::unordered_map<std::string, std::any, detail::TransparentStringHash, std::equal_to<>> m_objects;
 
-        // SoftCheck results side-channel. Written during Check() calls,
-        // cleared by BabyBehaveTest before each step. Not thread-local.
+        // SoftCheck results side-channel (written in Check(), cleared before each step).
         std::vector<SoftCheckResult> m_softCheckResults;
 
         friend class SoftCheck;
@@ -447,13 +423,13 @@ namespace BabyBehave::BDD {
         }
 
     public:
-        // key: const std::string& (no heterogeneous operator[] in unordered_map<C++26).
+        // Set via std::string key.
         template<typename T>
         void Set(const std::string& key, T obj) {
             m_objects[key] = std::move(obj);
         }
 
-        // key: std::string_view for zero-alloc lookup via transparent hash.
+        // Get via std::string_view key (zero-alloc via transparent hash).
         template<typename T>
         [[nodiscard]] T Get(std::string_view key) const {
             auto it = m_objects.find(key);
@@ -465,7 +441,7 @@ namespace BabyBehave::BDD {
             return std::any_cast<T>(it->second);
         }
 
-        // Opt-in, compile-time-checked type-safe key (delegates to string storage).
+        // Type-safe key variant (compile-time checked).
         template<typename T>
         struct ContextKey {
             const char* name;
@@ -478,26 +454,60 @@ namespace BabyBehave::BDD {
 
         template<typename T>
         [[nodiscard]] T Get(ContextKey<T> key) const {
-            // key.name is a const char*; Get<T>(std::string_view) below
-            // constructs the view for free (no allocation), unlike the
-            // std::string(key.name) this used to require.
+            // key.name is const char*; Get<T>(std::string_view) constructs
+            // view for free (no allocation).
             return Get<T>(key.name);
+        }
+
+        // Returns mutable reference (instead of copy) for in-place mutation
+        // of large/expensive-to-copy objects. Same not-found convention as Get<T>.
+        template<typename T>
+        [[nodiscard]] T& Mutate(std::string_view key) {
+            auto it = m_objects.find(key);
+            if (it == m_objects.end()) {
+                const auto errorMsg = std::string(detail::kKeyNotFoundPrefix) + std::string(key);
+                detail::PrintErrorLine(errorMsg);
+                throw std::out_of_range(errorMsg);
+            }
+            return std::any_cast<T&>(it->second);
+        }
+
+        // Keyed variant of Mutate<T>(std::string_view) above.
+        template<typename T>
+        [[nodiscard]] T& Mutate(ContextKey<T> key) {
+            return Mutate<T>(key.name);
+        }
+
+        // Returns reference to stored value, inserting `init` if absent
+        // (never overwrites if key exists, unlike Set<T>).
+        template<typename T>
+        [[nodiscard]] T& GetOrInit(std::string_view key, T init = T{}) {
+            auto it = m_objects.find(key);
+            if (it == m_objects.end()) {
+                it = m_objects.try_emplace(std::string(key), std::move(init)).first;
+            }
+            return std::any_cast<T&>(it->second);
+        }
+
+        // Keyed variant of GetOrInit<T>(std::string_view) above.
+        template<typename T>
+        [[nodiscard]] T& GetOrInit(ContextKey<T> key, T init = T{}) {
+            return GetOrInit<T>(key.name, std::move(init));
         }
     };
 
-    // Opt-in recorder for multiple named sub-checks per step (see example below).
-    // Purely additive: unused steps behave as before. Example:
-    //   bool MyStep(TestContext& ctx) {
-    //       SoftCheck checks(ctx);
-    //       checks.Check("has id", someId > 0);
-    //       checks.Check("name matches", name == "expected");
-    //       return checks.AllPassed();
-    //   }
+    // Alias for TestContext::ContextKey<T> (e.g., static constexpr Key<int> kCount{"count"};).
+    template<typename T>
+    using Key = TestContext::ContextKey<T>;
+
+    // Optional recorder for multiple named sub-checks per step (purely additive).
+    // Example: SoftCheck checks(ctx); checks.Check("has id", someId > 0);
+    // ... checks.Check(...); return checks.AllPassed();
     class SoftCheck {
     public:
         explicit SoftCheck(TestContext& context) : m_context(context) {}
 
-        // Record sub-check, return condition (supports early-return patterns).
+        // Records sub-check and returns condition (supports early returns).
         bool Check(std::string label, bool condition, std::string message = "") {
             m_context.RecordSoftCheck(SoftCheckResult{ .label = std::move(label), .passed = condition, .message = std::move(message) });
             if (!condition) {
@@ -506,7 +516,7 @@ namespace BabyBehave::BDD {
             return condition;
         }
 
-        // AND of all Check() calls (defaults to true if none called).
+        // AND of all Check() calls (true if none called).
         [[nodiscard]] bool AllPassed() const {
             return m_allPassed;
         }
@@ -524,7 +534,7 @@ namespace BabyBehave::BDD {
     using ContextSetupFunction = std::function<void(TestContext&)>;
 #endif
 
-    // Callback types (plain std::function; not move-only unlike StepFunction).
+    // Callback types (copyable std::function, not move-only).
     using ConditionNotVerifiedCallback = std::function<void(const std::string& errorMsg)>;
     using ExceptionCallback = std::function<void(const std::string& step, const std::exception&)>;
 
@@ -535,9 +545,8 @@ namespace BabyBehave::BDD {
     struct Or { StepFunction fn; };
     struct But { StepFunction fn; };
 
-    // StepMeta table removes duplicated try/catch/Verify logic by indexing
-    // constants (k*Label, k*FailedMessage) per step type. One template
-    // instantiation per StepType, same dispatch as before.
+    // StepMeta table eliminates duplicated try/catch logic by indexing
+    // per-step-type constants (k*Label, k*FailedMessage).
     namespace detail {
         template<typename T>
         struct StepMeta {
@@ -600,7 +609,7 @@ namespace BabyBehave::BDD {
     } // namespace detail
 
     // Outcome of one executed step (populated in SetCollectFailuresMode).
-    // message is empty when passed; location is "file:line" if available.
+    // message empty when passed; location is "file:line" if available.
     struct StepResult {
         std::string stepLabel;
         std::string stepName;
@@ -609,7 +618,7 @@ namespace BabyBehave::BDD {
         std::string location;
     };
 
-    // Scenario outcome: allPassed is AND of all StepResult::passed.
+    // Scenario outcome (allPassed = AND of all StepResult::passed).
     struct TestResult {
         std::string testName;
         bool allPassed = true;
@@ -623,8 +632,8 @@ namespace BabyBehave::BDD {
 
 
 #if defined(__cpp_lib_source_location)
-        // loc defaults to caller's location. suppressGivenNarration is false
-        // by default (used by Gherkin for synthetic no-op setup functions).
+        // loc defaults to caller's location; suppressGivenNarration used by
+        // Gherkin for synthetic no-op setup (defaults to false).
         BabyBehaveTest(std::string testName, ContextSetupFunction contextSetupFn,
                         bool suppressGivenNarration = false,
                         const std::source_location& loc = std::source_location::current())
@@ -645,19 +654,17 @@ namespace BabyBehave::BDD {
         }
 #endif
 
-        // Only std::bad_alloc could escape; all step/callback exceptions caught internally.
+        // Only std::bad_alloc escapes; all step/callback exceptions caught internally.
         // NOLINTNEXTLINE(bugprone-exception-escape)
         ~BabyBehaveTest() {
-            // Execute() is idempotent; no-op if already called.
+            // Execute() is idempotent.
             Execute();
         }
 
         BabyBehaveTest(const BabyBehaveTest&) = delete;
         BabyBehaveTest& operator=(const BabyBehaveTest&) = delete;
 
-        // Move deleted: defaulted move would double-execute (m_executed copied
-        // to both moved-to and moved-from). GivenAImpl returns by value
-        // (copy-elision in C++17 avoids calling this anyway).
+        // Move deleted: would double-execute (m_executed in both). Copy-elision avoids this anyway.
         BabyBehaveTest(BabyBehaveTest&&) = delete;
         BabyBehaveTest& operator=(BabyBehaveTest&&) = delete;
 
@@ -669,15 +676,14 @@ namespace BabyBehave::BDD {
             m_onExceptionCallback = std::move(callback);
         }
 
-        // Opt-in: record failures to TestResult instead of exit. Fluent.
+        // Record failures to TestResult instead of exit (fluent).
         BabyBehaveTest& SetCollectFailuresMode(bool enabled = true) {
             m_collectFailures = enabled;
             return *this;
         }
 
 #if defined(__cpp_lib_source_location)
-        // loc defaults to caller's location (captured by macro/direct call).
-        // name is a sink parameter (moved, saves string copy per registration).
+        // loc defaults to caller's location; name is sink parameter (moved).
         template<typename StepType>
         BabyBehaveTest& AddStep(std::string name, StepFunction stepFunction,
                                  const std::source_location& loc = std::source_location::current()) {
@@ -690,8 +696,8 @@ namespace BabyBehave::BDD {
         }
 #endif
 
-        // Bypass automatic source_location capture: takes explicit location string.
-        // Used by Gherkin to attribute steps to .feature file/line/column, not interpreter.
+        // Takes explicit location string (bypasses source_location capture).
+        // Used by Gherkin to attribute steps to .feature file/line/column.
         template<typename StepType>
         BabyBehaveTest& AddStepAt(std::string name, StepFunction stepFunction, std::string explicitLocation) {
             StepVariant step = StepType{ std::move(stepFunction) };
@@ -704,20 +710,17 @@ namespace BabyBehave::BDD {
             return m_steps;
         }
 
-        // Run scenario (setup + steps), return cached TestResult. Idempotent.
+        // Runs scenario (setup + steps), returns cached TestResult (idempotent).
         // Normally invoked by destructor; call manually with SetCollectFailuresMode
-        // to inspect results before destruction. Example:
-        //   BabyBehaveTest test = GivenA(SetupContext);
-        //   test.SetCollectFailuresMode(true).With(...).When(...).Then(...);
-        //   const TestResult& result = test.Execute();  // inspect results
+        // to inspect results before destruction.
         const TestResult& Execute() {
             if (m_executed) {
                 return m_result;
             }
             m_executed = true;
 
-            // Plain prints Given immediately; Arrow/Tree hold m_testName for end rendering.
-            // Suppressed when m_suppressGivenNarration (Gherkin's synthetic setup).
+            // Plain prints Given immediately; Arrow/Tree buffer for end rendering
+            // (suppressed if m_suppressGivenNarration).
             if (!m_suppressGivenNarration && detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
                 detail::PrintLine(std::string(detail::kGivenPrefix) + m_testName);
             }
@@ -741,7 +744,7 @@ namespace BabyBehave::BDD {
                     }, step.second);
             }
 
-            // Plain prints blank line; Arrow/Tree render buffered block now.
+            // Plain prints blank; Arrow/Tree render buffered block.
             if (detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
                 detail::PrintLine();
             } else {
@@ -772,7 +775,7 @@ namespace BabyBehave::BDD {
             };
         }
 
-        // Print step immediately (Plain) or buffer for end rendering (Arrow/Tree).
+        // Prints immediately (Plain) or buffers for end rendering (Arrow/Tree).
         void NarrateStep(detail::StepKindTag kind, std::string_view plainPrefix, const std::string& name) {
             if (detail::NarrationStyleFlag() == detail::NarrationStyle::Plain) {
                 detail::PrintLine(std::string(plainPrefix) + name);
@@ -781,17 +784,13 @@ namespace BabyBehave::BDD {
             }
         }
 
-        // One function per StepType (via template), indexed by StepMeta<T> instead of
-        // duplicating try/catch/Verify logic six times. Single std::visit dispatch site.
-        // NOTE: T& (not const T&) is deliberate: GCC/libstdc++'s std::move_only_function
-        // ::operator() is non-const, so step must be non-const to invoke step.fn(context).
+        // One per StepType (template indexed by StepMeta), avoiding try/catch duplication.
+        // T& not const: move_only_function::operator() is non-const.
         template<typename T>
         void executeStep(const std::string& name, T& step, const std::string& location) {
-            // Clear soft-check results; guarantees fresh list for step.fn() call.
             m_context.ClearSoftCheckResults();
             using Meta = detail::StepMeta<T>;
-            // All arguments are compile-time std::string_view (from StepMeta).
-            // Passing steps allocate nothing for labels/messages.
+            // StepMeta arguments are compile-time string_view (no allocation).
             NarrateStep(Meta::kind, Meta::prefix, name);
             try {
                 VerifyCondition(step.fn(m_context), Meta::failedMessage, Meta::resultLabel, name, location);
@@ -805,8 +804,7 @@ namespace BabyBehave::BDD {
             }
         }
 
-        // Append ": label (msg); label2 (msg2)" for each failed SoftCheck to out.
-        // Only failed checks included. Appends to out to avoid extra allocations.
+        // Appends ": label (msg); label2 (msg2)" for failed SoftChecks (avoids allocations).
         void AppendFailedSoftChecks(std::string& out) const {
             bool firstFailure = true;
             for (const auto& check : m_context.GetSoftCheckResults()) {
@@ -822,9 +820,9 @@ namespace BabyBehave::BDD {
             }
         }
 
-        // Handle step condition (on failure: invoke callback or record to m_result).
-        // In collect-failures mode: record all steps; callback is skipped.
-        // errorMsg/stepLabel are std::string_view; passing steps allocate nothing.
+        // Handles step condition: invoke callback or record to m_result on failure.
+        // In collect-failures mode, records all steps (skips callback).
+        // errorMsg/stepLabel are string_view (no allocation on pass).
         void VerifyCondition(bool condition, std::string_view errorMsg,
                               std::string_view stepLabel, const std::string& stepName,
                               const std::string& location) {
@@ -852,8 +850,8 @@ namespace BabyBehave::BDD {
             }
         }
 
-        // Invoke exception callback (same collect-failures behavior as VerifyCondition).
-        // Defers "step" label conversion to std::string until callback invocation.
+        // Invokes exception callback (same collect-failures behavior as VerifyCondition).
+        // Defers "step" label conversion to std::string until callback.
         void SafeInvokeExceptionCallback(std::string_view step, const std::exception& e,
                                           std::string_view stepLabel, const std::string& stepName,
                                           const std::string& location) {
@@ -881,14 +879,14 @@ namespace BabyBehave::BDD {
         ContextSetupFunction m_contextSetupFn;
         std::string m_contextSetupLocation;
 
-        // True for Gherkin synthetic no-op setup; suppresses redundant "Given a: <name>".
+        // Suppresses redundant "Given a: <name>" for Gherkin synthetic no-op setup.
         bool m_suppressGivenNarration = false;
 
         TestContext m_context;
         std::vector<Step> m_steps;
         std::vector<std::string> m_stepLocations;
 
-        // Buffered steps for Arrow/Tree rendering. Empty under Plain style.
+        // Steps buffered for Arrow/Tree rendering (empty under Plain).
         std::vector<detail::NarrationStepEntry> m_narrationSteps;
         bool m_anyStepFailedForNarration = false;
 
@@ -2211,70 +2209,21 @@ namespace Gherkin {
             std::vector<ParsedScenario> scenarios;
         };
 
-        // Plain ok/error/value result (not std::expected; no chaining needed).
+        // Plain ok/errors/value result (not std::expected; no chaining
+        // needed). errors is a VECTOR (not a single string) as of the
+        // multi-error-accumulation feature: ParseFeatureText no longer
+        // stops at the first structural parse error - it keeps parsing the
+        // rest of the text, recording every distinct structural error it
+        // finds along the way, and only sets ok=false if that vector ends
+        // up non-empty. See RecordParseError below (the single place every
+        // Handle*Line error path funnels through) and ParseFeatureText's own
+        // doc comment for the full recovery-strategy rationale (point vs.
+        // intermediate vs. corruptive errors).
         struct ParseOutcome {
             bool ok = false;
-            std::string error;
+            std::vector<std::string> errors;
             ParsedFeature feature;
         };
-
-        inline ParseOutcome MakeParseError(std::size_t lineNo, std::string_view message) {
-            ParseOutcome outcome;
-            outcome.ok = false;
-            outcome.error = "BabyBehave::Gherkin: line " + std::to_string(lineNo) + ": " + std::string(message);
-            return outcome;
-        }
-
-        // Reject out-of-scope constructs (Rule, etc). Data Tables ('|' rows
-        // outside an open Examples:/Scenarios: table) and Doc Strings
-        // ('"""'-delimited blocks) are handled separately and BEFORE this
-        // function is even reached - see HandleDataTableLine/
-        // HandleDocStringLine and their call sites in ProcessFeatureLine.
-        inline std::optional<ParseOutcome> RejectIfUnsupportedConstruct(std::string_view trimmed, std::size_t lineNo) {
-            if (trimmed.starts_with("Rule:")) {
-                return MakeParseError(lineNo, "'Rule:' is not supported in this version "
-                                               "(see docs/design/gherkin-support.md)");
-            }
-            return std::nullopt;
-        }
-
-        // Handle Feature: line; error if multiple Features.
-        inline std::optional<ParseOutcome> HandleFeatureLine(ParsedFeature& feature, bool& haveFeature,
-                                                               std::vector<std::string>& pendingTags,
-                                                               std::string_view trimmed, std::size_t lineNo) {
-            if (haveFeature) {
-                return MakeParseError(lineNo, "multiple 'Feature:' sections are not supported");
-            }
-            haveFeature = true;
-            feature.name = std::string(TrimView(trimmed.substr(std::string_view("Feature:").size())));
-            feature.tags = std::move(pendingTags);
-            pendingTags.clear();
-            return std::nullopt;
-        }
-
-        // Attach step to Background/Scenario; error if step before any
-        // Background:/Scenario:. On success, attachedIndex is set to the
-        // just-attached step's index into whichever container it landed in
-        // (feature.background or currentScenario->steps) - returning it
-        // this way (rather than making the caller re-derive it from
-        // currentScenario->steps.size() after the fact) means the caller
-        // never needs to dereference currentScenario itself, so there is no
-        // unchecked-optional-access risk at the call site.
-        inline std::optional<ParseOutcome> AttachParsedStep(ParsedFeature& feature,
-                                                              std::optional<ParsedScenario>& currentScenario,
-                                                              bool inBackground, std::size_t lineNo, ParsedStep step,
-                                                              std::size_t& attachedIndex) {
-            if (inBackground) {
-                feature.background.push_back(std::move(step));
-                attachedIndex = feature.background.size() - 1;
-            } else if (currentScenario) {
-                currentScenario->steps.push_back(std::move(step));
-                attachedIndex = currentScenario->steps.size() - 1;
-            } else {
-                return MakeParseError(lineNo, "step found outside of a Background:/Scenario:");
-            }
-            return std::nullopt;
-        }
 
         // Move in-progress Scenario to feature.scenarios (called between sections + end).
         inline void FlushScenario(ParsedFeature& feature, std::optional<ParsedScenario>& currentScenario) {
@@ -2297,6 +2246,11 @@ namespace Gherkin {
         // Mutable parse state (one per ParseFeatureText call).
         struct FeatureParseState {
             ParsedFeature feature;
+            // Every structural parse error found so far, in discovery order
+            // (see RecordParseError, the sole place anything is ever pushed
+            // here). Moved into ParseOutcome::errors once parsing finishes -
+            // see ParseFeatureText.
+            std::vector<std::string> errors;
             std::vector<std::string> pendingTags;
             std::optional<ParsedScenario> currentScenario;
             bool inBackground = false;
@@ -2324,6 +2278,16 @@ namespace Gherkin {
             // (reset on every non-'|' line), i.e. whether the NEXT '|' line
             // continues that same table or starts a fresh evaluation.
             bool inDataTable = false;
+            // INTERMEDIATE-recovery flag (see RecordParseError/
+            // ParseFeatureText's recovery-strategy doc comment): set when a
+            // Data Table row is rejected ("data table with no preceding
+            // step", "step already has an argument", or a stray
+            // Examples:/Scenarios: header with no preceding Outline) so
+            // every REMAINING contiguous '|'-prefixed line of that same
+            // malformed table is silently skipped (see ProcessFeatureLine)
+            // instead of re-reporting the identical error once per row -
+            // cleared on the first non-'|' line, exactly like inDataTable.
+            bool skipMalformedTableLines = false;
             std::optional<StepTarget> lastStepTarget;
             // Doc String state (see HandleDocStringLine). Reuses
             // lastStepTarget exactly as Data Tables do (same target, same
@@ -2350,7 +2314,120 @@ namespace Gherkin {
             std::size_t docStringIndent = 0;
             std::size_t docStringOpenLine = 0;
             std::vector<std::string> docStringLines;
+            // INTERMEDIATE-recovery flag for a REJECTED Doc String open
+            // ("doc string with no preceding step"/"step already has an
+            // argument" - see HandleDocStringLine): unlike a rejected Data
+            // Table (whose malformed rows are structurally distinguishable
+            // from anything else, see skipMalformedTableLines above), a Doc
+            // String's OPEN and CLOSE delimiter are the exact same three
+            // characters - without this flag, the eventual closing '"""' of
+            // a rejected attempt would be re-evaluated as a brand new
+            // opening attempt and re-trigger the IDENTICAL error a second
+            // time. While set, every line is silently swallowed (never
+            // attached anywhere - the attempt was invalid) until either the
+            // matching closing '"""' is found (clears the flag, no new
+            // error) or a LooksLikeBlockBoundary line is reached first
+            // (clears the flag and re-dispatches that line normally,
+            // mirroring the genuinely-unclosed-Doc-String corruptive
+            // recovery in ProcessFeatureLine - a rejected attempt must not
+            // be allowed to silently swallow an entire subsequent Scenario
+            // either).
+            bool skipRejectedDocString = false;
         };
+
+        // Every parse-error call site in this namespace funnels through
+        // here instead of constructing/returning a ParseOutcome directly -
+        // this is what lets ParseFeatureText keep processing the REST of
+        // the text after one structural error instead of aborting (see
+        // ParseOutcome's doc comment above). The message format
+        // ("<line>: parse error: <text>") is deliberately NOT prefixed with
+        // a feature label here - RunFeature() (which knows featureLabel)
+        // prepends it once per accumulated error when relaying to
+        // onFailure, giving a final "<file>:<line>: parse error: <message>"
+        // one-liner without threading featureLabel down into the parser.
+        inline void RecordParseError(FeatureParseState& state, std::size_t lineNo, std::string_view message) {
+            state.errors.push_back(std::to_string(lineNo) + ": parse error: " + std::string(message));
+        }
+
+        // A line that starts a brand new top-level block, used by the
+        // corruptive-error recovery below (see ProcessFeatureLine's
+        // in-doc-string handling and HandleDocStringLine's rejected-attempt
+        // skip) to resync instead of either (a) silently swallowing an
+        // otherwise-valid Scenario/Background as if it were doc string
+        // content, or (b) letting a rejected doc string's own "content"
+        // lines misparse as real grammar. Deliberately NOT exhaustive of
+        // every Gherkin construct (no Feature:/Examples:/Scenarios: /tags) -
+        // just the handful of constructs that can legitimately follow a Doc
+        // String block within the SAME Feature. Trade-off, accepted by
+        // design: a genuine Doc String whose literal content happens to
+        // contain a line starting with one of these keywords (e.g.
+        // demonstrating Gherkin syntax inside documentation) is
+        // misidentified as a resync boundary - an edge case judged far less
+        // harmful than the alternative (silently losing an entire
+        // subsequent Scenario's worth of structural errors to a single
+        // unclosed/rejected Doc String).
+        inline bool LooksLikeBlockBoundary(std::string_view trimmed) {
+            return trimmed.starts_with("Scenario:") || trimmed.starts_with("Example:") ||
+                   trimmed.starts_with("Scenario Outline:") || trimmed.starts_with("Scenario Template:") ||
+                   trimmed.starts_with("Background:");
+        }
+
+        // Reject out-of-scope constructs (Rule, etc). Data Tables ('|' rows
+        // outside an open Examples:/Scenarios: table) and Doc Strings
+        // ('"""'-delimited blocks) are handled separately and BEFORE this
+        // function is even reached - see HandleDataTableLine/
+        // HandleDocStringLine and their call sites in ProcessFeatureLine.
+        // POINT error (see RecordParseError/ParseFeatureText): self-
+        // contained to this one line - the caller simply drops it and
+        // continues with the next line, no resync needed.
+        inline bool RejectIfUnsupportedConstruct(FeatureParseState& state, std::string_view trimmed,
+                                                    std::size_t lineNo) {
+            if (trimmed.starts_with("Rule:")) {
+                RecordParseError(state, lineNo,
+                                  "'Rule:' is not supported in this version (see docs/design/gherkin-support.md)");
+                return true;
+            }
+            return false;
+        }
+
+        // Handle Feature: line; error if multiple Features. POINT error: a
+        // second 'Feature:' line is dropped (the first Feature's name/tags
+        // are kept), parsing continues normally from the next line.
+        inline void HandleFeatureLine(FeatureParseState& state, std::string_view trimmed, std::size_t lineNo) {
+            if (state.haveFeature) {
+                RecordParseError(state, lineNo, "multiple 'Feature:' sections are not supported");
+                return;
+            }
+            state.haveFeature = true;
+            state.feature.name = std::string(TrimView(trimmed.substr(std::string_view("Feature:").size())));
+            state.feature.tags = std::move(state.pendingTags);
+            state.pendingTags.clear();
+        }
+
+        // Attach step to Background/Scenario; error if step before any
+        // Background:/Scenario:. On success, attachedIndex is set to the
+        // just-attached step's index into whichever container it landed in
+        // (feature.background or currentScenario->steps) - returning it
+        // this way (rather than making the caller re-derive it from
+        // currentScenario->steps.size() after the fact) means the caller
+        // never needs to dereference currentScenario itself, so there is no
+        // unchecked-optional-access risk at the call site. Returns false
+        // (POINT error - the step is dropped, parsing continues normally)
+        // if there's nowhere to attach it.
+        inline bool AttachParsedStep(FeatureParseState& state, bool inBackground, std::size_t lineNo, ParsedStep step,
+                                       std::size_t& attachedIndex) {
+            if (inBackground) {
+                state.feature.background.push_back(std::move(step));
+                attachedIndex = state.feature.background.size() - 1;
+            } else if (state.currentScenario) {
+                state.currentScenario->steps.push_back(std::move(step));
+                attachedIndex = state.currentScenario->steps.size() - 1;
+            } else {
+                RecordParseError(state, lineNo, "step found outside of a Background:/Scenario:");
+                return false;
+            }
+            return true;
+        }
 
         // Resolve a StepTarget to the actual ParsedStep it refers to.
         // Precondition: target.inBackground == false implies
@@ -2380,22 +2457,26 @@ namespace Gherkin {
         // place a scenario gets flushed (Background:, Scenario:/Example:/
         // Outline:/Template:, and end-of-file) - anything else risks
         // silently dropping a completed table or (worse) leaking it onto the
-        // NEXT scenario. Returns a parse error if the currently-in-progress
-        // scenario was declared as a Scenario Outline/Template but never got
-        // a usable Examples:/Scenarios: table (missing entirely, or present
-        // but with zero data rows) - a silently-vanishing scenario would be
-        // far more confusing than a hard error here.
-        inline std::optional<ParseOutcome> FinalizeCurrentScenarioExamples(FeatureParseState& state) {
+        // NEXT scenario. Records a parse error (POINT: self-contained to
+        // this one Outline, the reset below always still runs so parser
+        // state stays consistent for whatever follows) if the currently-
+        // in-progress scenario was declared as a Scenario Outline/Template
+        // but never got a usable Examples:/Scenarios: table (missing
+        // entirely, or present but with zero data rows) - a silently-
+        // vanishing scenario would be far more confusing than a hard error
+        // here. On error, scenario.examples is deliberately left unset (the
+        // scenario passes through ExpandScenarioOutlines unexpanded, as an
+        // ordinary non-Outline Scenario) - harmless since a non-empty
+        // errors vector already guarantees RunFeature() executes nothing.
+        inline void FinalizeCurrentScenarioExamples(FeatureParseState& state) {
             if (state.currentScenarioIsOutline) {
                 if (!state.pendingExamples) {
-                    return MakeParseError(state.currentScenario ? state.currentScenario->line : 0,
+                    RecordParseError(state, state.currentScenario ? state.currentScenario->line : 0,
                         "'Scenario Outline:'/'Scenario Template:' has no 'Examples:'/'Scenarios:' table");
-                }
-                if (state.pendingExamples->rows.empty()) {
-                    return MakeParseError(state.pendingExamples->headerLine,
+                } else if (state.pendingExamples->rows.empty()) {
+                    RecordParseError(state, state.pendingExamples->headerLine,
                         "'Examples:'/'Scenarios:' table must have at least one data row");
-                }
-                if (state.currentScenario) {
+                } else if (state.currentScenario) {
                     state.currentScenario->examples = std::move(state.pendingExamples);
                 }
             }
@@ -2403,7 +2484,6 @@ namespace Gherkin {
             state.haveExamplesHeader = false;
             state.currentScenarioIsOutline = false;
             state.pendingExamples.reset();
-            return std::nullopt;
         }
 
         // A '|' line reached OUTSIDE an open Examples:/Scenarios: table
@@ -2413,18 +2493,27 @@ namespace Gherkin {
         //     a Data Table row for state.lastStepTarget - append another row,
         //     unless its cell count disagrees with the table's first
         //     (header) row, in which case - error (mirrors the Examples:
-        //     table's header/row width check above).
+        //     table's header/row width check above). POINT error: the
+        //     malformed row is simply dropped (not pushed), inDataTable
+        //     stays true so any further, still-valid rows of this SAME
+        //     table keep accumulating normally.
         //   - !state.lastStepTarget: no step immediately/recently attached
         //     (start of file, or right after Feature:/Background:/
-        //     Scenario: with no step yet, or after a context change) - error.
+        //     Scenario: with no step yet, or after a context change) -
+        //     error. INTERMEDIATE recovery: sets skipMalformedTableLines so
+        //     every remaining contiguous '|' row of this same stray table
+        //     is silently skipped instead of re-reporting "no preceding
+        //     step" once per row (see FeatureParseState's doc comment).
         //   - state.lastStepTarget's step already has a non-monostate
         //     rawArgument (a second '|' block after the first, once
         //     something other than a table row - e.g. a blank line - has
-        //     reset state.inDataTable) - error "step already has an argument".
+        //     reset state.inDataTable) - error "step already has an
+        //     argument". Same INTERMEDIATE skip-remaining-rows recovery as
+        //     above - a rejected second table's rows would otherwise
+        //     re-trigger this identical error once per row too.
         //   - Otherwise: the FIRST row of a brand new Data Table for that
         //     step; attach it and start accumulating.
-        inline std::optional<ParseOutcome> HandleDataTableLine(FeatureParseState& state, std::string_view trimmed,
-                                                                  std::size_t lineNo) {
+        inline void HandleDataTableLine(FeatureParseState& state, std::string_view trimmed, std::size_t lineNo) {
             const std::vector<std::string> cells = ParsePipeRow(trimmed);
             if (state.inDataTable) {
                 if (!state.lastStepTarget) {
@@ -2433,29 +2522,36 @@ namespace Gherkin {
                     // set (see below), and both are cleared together on
                     // every context change. Kept so this never dereferences
                     // an empty optional.
-                    return MakeParseError(lineNo, "data table with no preceding step");
+                    RecordParseError(state, lineNo, "data table with no preceding step");
+                    state.inDataTable = false;
+                    state.skipMalformedTableLines = true;
+                    return;
                 }
                 ParsedStep& step = ResolveStepTarget(state, *state.lastStepTarget);
                 auto& table = std::get<DataTable>(step.rawArgument);
                 if (!table.rows.empty() && cells.size() != table.rows.front().size()) {
-                    return MakeParseError(lineNo, "data table row has " + std::to_string(cells.size()) +
-                                                       " cell(s), expected " +
-                                                       std::to_string(table.rows.front().size()) +
-                                                       " (from header)");
+                    RecordParseError(state, lineNo, "data table row has " + std::to_string(cells.size()) +
+                                                         " cell(s), expected " +
+                                                         std::to_string(table.rows.front().size()) +
+                                                         " (from header)");
+                    return;
                 }
                 table.rows.push_back(cells);
-                return std::nullopt;
+                return;
             }
             if (!state.lastStepTarget) {
-                return MakeParseError(lineNo, "data table with no preceding step");
+                RecordParseError(state, lineNo, "data table with no preceding step");
+                state.skipMalformedTableLines = true;
+                return;
             }
             ParsedStep& step = ResolveStepTarget(state, *state.lastStepTarget);
             if (!std::holds_alternative<std::monostate>(step.rawArgument)) {
-                return MakeParseError(lineNo, "step already has an argument");
+                RecordParseError(state, lineNo, "step already has an argument");
+                state.skipMalformedTableLines = true;
+                return;
             }
             step.rawArgument = DataTable{ .rows = { cells } };
             state.inDataTable = true;
-            return std::nullopt;
         }
 
         // A '|' line reached WHILE an Examples:/Scenarios: table is open
@@ -2464,6 +2560,33 @@ namespace Gherkin {
         // never both claim the same line). Either this block's own header
         // row (the first '|' line since the most recent Examples:/
         // Scenarios: line - state.haveExamplesHeader false) or a data row.
+        //
+        // Two different recovery strategies, deliberately NOT the same one:
+        //   - A single bad DATA row (header already fine): POINT - record
+        //     the error and STILL push the (malformed) cells into
+        //     table.rows, then keep validating any further rows of this
+        //     same block independently. Pushing the malformed row anyway
+        //     (rather than dropping it) is what stops this from cascading
+        //     into FinalizeCurrentScenarioExamples's separate "must have at
+        //     least one data row" check if this happened to be the block's
+        //     only row - a dropped row would make table.rows.empty() true
+        //     and spuriously trigger a SECOND, unrelated-looking error for
+        //     the exact same underlying mistake. This is safe precisely
+        //     because ExpandScenarioOutlines is only ever invoked when
+        //     state.errors is empty (see ParseFeatureText) - a malformed
+        //     row is never actually substituted into a real scenario.
+        //   - A bad HEADER on a second-or-later Examples:/Scenarios: block
+        //     (its cell count doesn't match the count already established
+        //     by an earlier block on the SAME Outline): INTERMEDIATE - sets
+        //     skipMalformedTableLines so every remaining row of THIS one
+        //     malformed block is silently skipped (see ProcessFeatureLine
+        //     and FeatureParseState's doc comment), rather than validating
+        //     each of them against a column count the user's own (bad)
+        //     header didn't actually intend - a plain POINT/continue
+        //     classification here would spuriously re-flag every one of
+        //     that block's rows against the PRE-established header, one
+        //     near-duplicate error per row, for what is really one mistake
+        //     (the block's header line itself).
         //
         // Multiple Examples:/Scenarios: blocks on the same Scenario
         // Outline/Template are MERGED into a single state.pendingExamples
@@ -2475,10 +2598,8 @@ namespace Gherkin {
         // order. A second-or-later block's own header row is therefore
         // validated against the FIRST block's column count (not
         // re-stored - the first block's column names are what <name>
-        // substitution uses; see SubstitutePlaceholders), exactly like a
-        // within-block row/header cell-count mismatch is already an error.
-        inline std::optional<ParseOutcome> HandleExamplesTableRow(FeatureParseState& state, std::string_view trimmed,
-                                                                     std::size_t lineNo) {
+        // substitution uses; see SubstitutePlaceholders).
+        inline void HandleExamplesTableRow(FeatureParseState& state, std::string_view trimmed, std::size_t lineNo) {
             if (!state.pendingExamples) {
                 // Unreachable in practice: state.inExamplesTable is only
                 // ever set true together with state.pendingExamples being
@@ -2496,23 +2617,33 @@ namespace Gherkin {
                     table.header = cells;
                     table.headerLine = lineNo;
                 } else if (cells.size() != table.header.size()) {
-                    return MakeParseError(lineNo, "Examples header has " + std::to_string(cells.size()) +
-                                                       " cell(s) but an earlier 'Examples:'/'Scenarios:' block on "
-                                                       "this 'Scenario Outline:'/'Scenario Template:' declared " +
-                                                       std::to_string(table.header.size()));
+                    RecordParseError(state, lineNo, "Examples header has " + std::to_string(cells.size()) +
+                                                         " cell(s) but an earlier 'Examples:'/'Scenarios:' block on "
+                                                         "this 'Scenario Outline:'/'Scenario Template:' declared " +
+                                                         std::to_string(table.header.size()));
+                    // INTERMEDIATE recovery: see function comment above.
+                    state.skipMalformedTableLines = true;
+                    return;
                 }
                 // A later block's header matching column count is accepted
                 // without overwriting table.header - see function comment.
                 state.haveExamplesHeader = true;
-                return std::nullopt;
+                return;
             }
             if (cells.size() != table.header.size()) {
-                return MakeParseError(lineNo, "Examples row has " + std::to_string(cells.size()) +
-                                                   " cell(s) but the header declares " +
-                                                   std::to_string(table.header.size()));
+                RecordParseError(state, lineNo, "Examples row has " + std::to_string(cells.size()) +
+                                                     " cell(s) but the header declares " +
+                                                     std::to_string(table.header.size()));
+                // POINT recovery: still push the malformed row (see function
+                // comment above for why - avoids a spurious cascade into
+                // FinalizeCurrentScenarioExamples's separate "must have at
+                // least one data row" check). Never actually substituted
+                // into a real scenario: ExpandScenarioOutlines only runs
+                // when state.errors is empty (see ParseFeatureText).
+                table.rows.push_back(ExamplesRow{ .line = lineNo, .cells = cells });
+                return;
             }
             table.rows.push_back(ExamplesRow{ .line = lineNo, .cells = cells });
-            return std::nullopt;
         }
 
         // The Doc String delimiter (see docs/design/gherkin-support.md).
@@ -2567,8 +2698,18 @@ namespace Gherkin {
         // std::string, attaches it to the target step's rawArgument, and
         // closes the block; any other line is appended to
         // state.docStringLines RAW/verbatim, with zero interpretation.
-        inline std::optional<ParseOutcome> HandleDocStringLine(FeatureParseState& state, std::string_view raw,
-                                                                  std::string_view trimmed, std::size_t lineNo) {
+        // Errors here are POINT ("doc string with no preceding step"/"step
+        // already has an argument" - a single mistaken second table/doc-
+        // string attachment - see FeatureParseState::skipRejectedDocString's
+        // doc comment for why the OPENING error path still needs to swallow
+        // lines up to the matching closing '"""': unlike a Data Table's
+        // first-bad-row (structurally distinct from a valid row), a Doc
+        // String's own closing delimiter is byte-identical to its opening
+        // one, so without swallowing, that closing line would be re-
+        // evaluated as a brand new (and identically invalid) opening
+        // attempt, reporting the SAME mistake twice for one typo).
+        inline void HandleDocStringLine(FeatureParseState& state, std::string_view raw, std::string_view trimmed,
+                                           std::size_t lineNo) {
             if (state.inDocString) {
                 if (trimmed.starts_with(kDocStringDelimiter)) {
                     std::string joined;
@@ -2585,29 +2726,35 @@ namespace Gherkin {
                         // (that is the only place state.inDocString is ever
                         // set true). Kept so this never dereferences an
                         // empty optional.
-                        return MakeParseError(lineNo, "doc string with no preceding step");
+                        RecordParseError(state, lineNo, "doc string with no preceding step");
+                        state.inDocString = false;
+                        state.docStringLines.clear();
+                        return;
                     }
                     ParsedStep& step = ResolveStepTarget(state, *state.lastStepTarget);
                     step.rawArgument = std::move(joined);
                     state.inDocString = false;
                     state.docStringLines.clear();
-                    return std::nullopt;
+                    return;
                 }
                 state.docStringLines.emplace_back(raw);
-                return std::nullopt;
+                return;
             }
             if (!state.lastStepTarget) {
-                return MakeParseError(lineNo, "doc string with no preceding step");
+                RecordParseError(state, lineNo, "doc string with no preceding step");
+                state.skipRejectedDocString = true;
+                return;
             }
             ParsedStep& step = ResolveStepTarget(state, *state.lastStepTarget);
             if (!std::holds_alternative<std::monostate>(step.rawArgument)) {
-                return MakeParseError(lineNo, "step already has an argument");
+                RecordParseError(state, lineNo, "step already has an argument");
+                state.skipRejectedDocString = true;
+                return;
             }
             state.docStringIndent = LeadingWhitespaceCount(raw);
             state.docStringOpenLine = lineNo;
             state.docStringLines.clear();
             state.inDocString = true;
-            return std::nullopt;
         }
 
         // Handle a Scenario:/Example:/Scenario Outline:/Scenario Template:
@@ -2617,13 +2764,9 @@ namespace Gherkin {
         // one. Split out of ProcessFeatureLine purely to keep that
         // function's cognitive complexity under this codebase's clang-tidy
         // threshold.
-        inline std::optional<ParseOutcome> HandleScenarioHeaderLine(FeatureParseState& state,
-                                                                        std::string_view trimmed,
-                                                                        std::size_t lineNo) {
+        inline void HandleScenarioHeaderLine(FeatureParseState& state, std::string_view trimmed, std::size_t lineNo) {
             state.lastStepTarget.reset();
-            if (const auto failure = FinalizeCurrentScenarioExamples(state)) {
-                return failure;
-            }
+            FinalizeCurrentScenarioExamples(state);
             FlushScenario(state.feature, state.currentScenario);
             state.inBackground = false;
             state.currentScenarioIsOutline =
@@ -2635,7 +2778,6 @@ namespace Gherkin {
             state.pendingTags.clear();
             scenario.line = lineNo;
             state.currentScenario = std::move(scenario);
-            return std::nullopt;
         }
 
         // Handle a step-keyword (Given/When/Then/And/But/...) line - attaches
@@ -2645,15 +2787,27 @@ namespace Gherkin {
         // table (Bug 2 fix - Examples:/Scenarios: always comes last in a
         // Scenario Outline/Template; see FeatureParseState::inExamplesTable),
         // or before any Background:/Scenario: at all (see AttachParsedStep).
-        // Split out of ProcessFeatureLine for the same cognitive-complexity
-        // reason as HandleScenarioHeaderLine above.
-        inline std::optional<ParseOutcome> HandleStepKeywordLine(
-            FeatureParseState& state, std::string_view raw, std::pair<StepKeyword, std::string_view> matched,
-            std::size_t lineNo) {
+        // Both errors are POINT: the step line is dropped, parsing continues
+        // normally with the next line. Split out of ProcessFeatureLine for
+        // the same cognitive-complexity reason as HandleScenarioHeaderLine above.
+        inline void HandleStepKeywordLine(FeatureParseState& state, std::string_view raw,
+                                             std::pair<StepKeyword, std::string_view> matched, std::size_t lineNo) {
             if (state.inExamplesTable) {
-                return MakeParseError(lineNo,
+                RecordParseError(state, lineNo,
                     "step keyword found after this 'Scenario Outline:'/'Scenario Template:''s "
                     "'Examples:'/'Scenarios:' table (steps must be declared before Examples:/Scenarios:)");
+                // INTERMEDIATE recovery: state.inExamplesTable stays true (it
+                // is only cleared at Finalize/next block), so any pipe lines
+                // immediately following this rejected step would otherwise be
+                // misrouted into HandleExamplesTableRow - either silently
+                // accepted as bogus extra data rows (if their cell count
+                // happens to match the real header) or spamming a fresh
+                // "Examples row has N cell(s) but header declares M" error
+                // per line (if it doesn't). Neither outcome is acceptable, so
+                // swallow the rest of this contiguous pipe-line region via
+                // the same mechanism used for other malformed tables.
+                state.skipMalformedTableLines = true;
+                return;
             }
             const auto& [keyword, rest] = matched;
             ParsedStep step;
@@ -2663,25 +2817,135 @@ namespace Gherkin {
             step.column = LeadingWhitespaceCount(raw) + 1;
             const bool inBackground = state.inBackground;
             std::size_t attachedIndex = 0;
-            std::optional<ParseOutcome> outcome = AttachParsedStep(state.feature, state.currentScenario, inBackground,
-                                                                       lineNo, std::move(step), attachedIndex);
-            if (!outcome) {
+            if (AttachParsedStep(state, inBackground, lineNo, std::move(step), attachedIndex)) {
                 state.lastStepTarget = StepTarget{ .inBackground = inBackground, .index = attachedIndex };
+            } else {
+                state.lastStepTarget.reset();
             }
-            return outcome;
         }
 
-        // Classify trimmed Gherkin line; return error or std::nullopt (including
-        // for free-text description lines). Per-line decision tree.
-        inline std::optional<ParseOutcome> ProcessFeatureLine(FeatureParseState& state, std::string_view raw,
-                                                                std::size_t lineNo) {
+        // Handle an 'Examples:'/'Scenarios:' header line for a Scenario
+        // Outline/Template. INTERMEDIATE recovery for the "no preceding
+        // Outline" case: a stray Examples:/Scenarios: block is exactly as
+        // prone to per-row duplicate spam as a malformed Data Table (its
+        // rows would otherwise misparse as Data Table rows, one "no
+        // preceding step"/"already has an argument" error per row) - reuses
+        // the same skipMalformedTableLines mechanism. Otherwise starts (or
+        // merges into, for a second/later Examples:/Scenarios: block on the
+        // same Outline - see HandleExamplesTableRow) the pending table. Also
+        // split out of ProcessFeatureLine for the same cognitive-complexity
+        // reason as HandleScenarioHeaderLine/HandleStepKeywordLine above -
+        // but unlike HandleScenarioHeaderLine, this function is not a purely
+        // mechanical extraction: the skipMalformedTableLines recovery for a
+        // stray Examples:/Scenarios: header is real logic that lives here.
+        inline void HandleExamplesHeaderLine(FeatureParseState& state, std::size_t lineNo) {
+            state.lastStepTarget.reset();
+            if (!state.currentScenarioIsOutline) {
+                RecordParseError(state, lineNo,
+                    "'Examples:'/'Scenarios:' without a preceding 'Scenario Outline:'/'Scenario Template:'");
+                state.skipMalformedTableLines = true;
+                return;
+            }
+            state.inExamplesTable = true;
+            state.haveExamplesHeader = false;
+            // A second (or later) Examples:/Scenarios: block on the same
+            // Outline MERGES into the already-in-progress table (see
+            // HandleExamplesTableRow) rather than starting a fresh one - real
+            // Cucumber supports multiple named Examples: blocks per outline,
+            // with every row from every block used, in declaration order.
+            // Only start a brand new table when this is genuinely the first
+            // block for this Outline (nothing collected yet).
+            if (!state.pendingExamples || state.pendingExamples->rows.empty()) {
+                state.pendingExamples = ExamplesTable{};
+            }
+        }
+
+        // INTERMEDIATE recovery for a REJECTED Doc String open attempt (see
+        // FeatureParseState::skipRejectedDocString's doc comment): swallows
+        // every line up to and including its own matching closing '"""'
+        // (never attached anywhere - the attempt was invalid), UNLESS a
+        // block boundary is reached first (mirrors the corruptive resync in
+        // ConsumeDocStringLine below for a genuinely-unclosed Doc String - a
+        // rejected attempt must not be allowed to silently eat an entire
+        // subsequent Scenario). Returns true if this line was fully consumed
+        // (caller must return without further processing); returns false if
+        // there was nothing to skip, OR if a block boundary was just reached
+        // and skipRejectedDocString was cleared - in the latter case the
+        // caller must fall through and re-dispatch this SAME line normally,
+        // it is NOT yet consumed. Also split out of ProcessFeatureLine to
+        // keep that function's cognitive complexity manageable, but this is
+        // not a mechanical extraction of pre-existing code: the corruptive
+        // resync it performs (swallow-until-close-or-boundary for a rejected
+        // Doc String attempt) is real recovery logic that has no other
+        // caller.
+        inline bool ConsumeSkippedRejectedDocStringLine(FeatureParseState& state, std::string_view trimmed) {
+            if (!state.skipRejectedDocString) {
+                return false;
+            }
+            if (trimmed.starts_with(kDocStringDelimiter)) {
+                state.skipRejectedDocString = false;
+                return true;
+            }
+            if (LooksLikeBlockBoundary(trimmed)) {
+                state.skipRejectedDocString = false;
+                return false; // Fall through: reprocess this boundary line normally.
+            }
+            return true;
+        }
+
+        // Doc String content/closing mode: an open '"""' block claims EVERY
+        // line until its closing '"""', bypassing every other classification
+        // in ProcessFeatureLine (blank/comment/tag/table/keyword/...) - see
+        // FeatureParseState::inDocString and HandleDocStringLine. CORRUPTIVE
+        // recovery: if a block-boundary-shaped line (see
+        // LooksLikeBlockBoundary) is reached BEFORE any closing '"""', the
+        // Doc String is treated as unclosed right here (instead of only
+        // discovering this once EOF is reached) - the error is recorded
+        // against the OPENING line. Without this, a single unclosed Doc
+        // String earlier in the file would silently eat every subsequent
+        // Scenario's text as "content", hiding their own independent
+        // structural errors entirely (see docs/design/gherkin-support.md and
+        // this feature's own design notes on why that would violate "report
+        // everything found in one pass"). Returns true if this line was
+        // fully consumed (caller must return); returns false if inDocString
+        // was already clear, OR if an unclosed Doc String was just detected
+        // and recovered - in the latter case the caller must fall through
+        // and re-dispatch this SAME boundary line normally. Also split out
+        // of ProcessFeatureLine to keep that function's cognitive complexity
+        // manageable, but this is not a mechanical extraction of
+        // pre-existing code: the corruptive early-detection of an unclosed
+        // Doc String at a block boundary (rather than only at EOF) is real
+        // recovery logic that has no other caller.
+        inline bool ConsumeDocStringLine(FeatureParseState& state, std::string_view raw, std::string_view trimmed,
+                                          std::size_t lineNo) {
+            if (!state.inDocString) {
+                return false;
+            }
+            if (!trimmed.starts_with(kDocStringDelimiter) && LooksLikeBlockBoundary(trimmed)) {
+                RecordParseError(state, state.docStringOpenLine,
+                                  R"(doc string is not closed (missing terminating '"""'))");
+                state.inDocString = false;
+                state.docStringLines.clear();
+                return false; // Fall through: reprocess this boundary line normally.
+            }
+            HandleDocStringLine(state, raw, trimmed, lineNo);
+            return true;
+        }
+
+        // Classify trimmed Gherkin line; record an error (see
+        // RecordParseError) or do nothing (including for free-text
+        // description lines) - never aborts the parse. Per-line decision
+        // tree. See FeatureParseState's doc comments (skipMalformedTableLines/
+        // skipRejectedDocString) and ParseOutcome's doc comment above for the
+        // overall point/intermediate/corruptive recovery-strategy rationale.
+        inline void ProcessFeatureLine(FeatureParseState& state, std::string_view raw, std::size_t lineNo) {
             const std::string_view trimmed = TrimView(raw);
-            // Doc String content/closing mode: an open '"""' block claims
-            // EVERY line until its closing '"""', bypassing every other
-            // classification below (blank/comment/tag/table/keyword/...) -
-            // see FeatureParseState::inDocString and HandleDocStringLine.
-            if (state.inDocString) {
-                return HandleDocStringLine(state, raw, trimmed, lineNo);
+
+            if (ConsumeSkippedRejectedDocStringLine(state, trimmed)) {
+                return;
+            }
+            if (ConsumeDocStringLine(state, raw, trimmed, lineNo)) {
+                return;
             }
             // A Data Table only continues across CONSECUTIVE '|' rows - any
             // other kind of line (blank, comment, tag, a new construct, ...)
@@ -2692,74 +2956,73 @@ namespace Gherkin {
             const bool isPipeLine = !trimmed.empty() && trimmed.front() == '|';
             if (!isPipeLine) {
                 state.inDataTable = false;
+                state.skipMalformedTableLines = false;
             }
             if (trimmed.empty() || trimmed.front() == '#') {
-                return std::nullopt;
+                return;
             }
             if (trimmed.front() == '@') {
                 AppendTagsFromLine(trimmed, state.pendingTags);
-                return std::nullopt;
+                return;
+            }
+            // INTERMEDIATE recovery continuation: still swallowing the
+            // remaining rows of an already-reported malformed table (see
+            // FeatureParseState::skipMalformedTableLines) - deliberately
+            // checked regardless of state.inExamplesTable, since this flag
+            // is set from BOTH contexts (a malformed Data Table outside any
+            // Examples: block, and a malformed second Examples:/Scenarios:
+            // header WHILE inExamplesTable is still true - see
+            // HandleExamplesTableRow) and is only ever set from whichever
+            // one is actually active, never both at once.
+            if (isPipeLine && state.skipMalformedTableLines) {
+                return;
             }
             // Must run BEFORE the Data Table '|' handling below: a bare '|'
             // line is an Examples row while an Examples:/Scenarios: table is
             // actually open, and a Data Table row otherwise - two distinct
             // contexts that must never both claim the same line.
             if (state.inExamplesTable && trimmed.front() == '|') {
-                return HandleExamplesTableRow(state, trimmed, lineNo);
+                HandleExamplesTableRow(state, trimmed, lineNo);
+                return;
             }
             if (isPipeLine) {
-                return HandleDataTableLine(state, trimmed, lineNo);
+                HandleDataTableLine(state, trimmed, lineNo);
+                return;
             }
             if (trimmed.starts_with(kDocStringDelimiter)) {
-                return HandleDocStringLine(state, raw, trimmed, lineNo);
+                HandleDocStringLine(state, raw, trimmed, lineNo);
+                return;
             }
-            if (const auto rejected = RejectIfUnsupportedConstruct(trimmed, lineNo)) {
-                return rejected;
+            if (RejectIfUnsupportedConstruct(state, trimmed, lineNo)) {
+                return;
             }
             if (trimmed.starts_with("Feature:")) {
                 state.lastStepTarget.reset();
-                return HandleFeatureLine(state.feature, state.haveFeature, state.pendingTags, trimmed, lineNo);
+                HandleFeatureLine(state, trimmed, lineNo);
+                return;
             }
             if (trimmed.starts_with("Background:")) {
                 state.lastStepTarget.reset();
-                if (const auto failure = FinalizeCurrentScenarioExamples(state)) {
-                    return failure;
-                }
+                FinalizeCurrentScenarioExamples(state);
                 FlushScenario(state.feature, state.currentScenario);
                 state.inBackground = true;
                 state.pendingTags.clear(); // Background: does not take tags in this version
-                return std::nullopt;
+                return;
             }
             if (trimmed.starts_with("Scenario:") || trimmed.starts_with("Example:") ||
                 trimmed.starts_with("Scenario Outline:") || trimmed.starts_with("Scenario Template:")) {
-                return HandleScenarioHeaderLine(state, trimmed, lineNo);
+                HandleScenarioHeaderLine(state, trimmed, lineNo);
+                return;
             }
             if (trimmed.starts_with("Examples:") || trimmed.starts_with("Scenarios:")) {
-                state.lastStepTarget.reset();
-                if (!state.currentScenarioIsOutline) {
-                    return MakeParseError(
-                        lineNo, "'Examples:'/'Scenarios:' without a preceding 'Scenario Outline:'/'Scenario Template:'");
-                }
-                state.inExamplesTable = true;
-                state.haveExamplesHeader = false;
-                // A second (or later) Examples:/Scenarios: block on the same
-                // Outline MERGES into the already-in-progress table (see
-                // HandleExamplesTableRow) rather than starting a fresh one -
-                // real Cucumber supports multiple named Examples: blocks per
-                // outline, with every row from every block used, in
-                // declaration order. Only start a brand new table when this
-                // is genuinely the first block for this Outline (nothing
-                // collected yet).
-                if (!state.pendingExamples || state.pendingExamples->rows.empty()) {
-                    state.pendingExamples = ExamplesTable{};
-                }
-                return std::nullopt;
+                HandleExamplesHeaderLine(state, lineNo);
+                return;
             }
             if (const auto matched = MatchStepKeyword(trimmed)) {
-                return HandleStepKeywordLine(state, raw, *matched, lineNo);
+                HandleStepKeywordLine(state, raw, *matched, lineNo);
+                return;
             }
             // Ignorable free-text description line.
-            return std::nullopt;
         }
 
         // Replace every <name> token in `text` with the matching Examples
@@ -2859,36 +3122,64 @@ namespace Gherkin {
             feature.scenarios = std::move(expanded);
         }
 
-        // Free-text prose under Feature:/Scenario:/Background: ignored (no executable meaning).
+        // Free-text prose under Feature:/Scenario:/Background: ignored (no
+        // executable meaning). Parses the ENTIRE text unconditionally - one
+        // structural error no longer aborts the parse, it is recorded (see
+        // RecordParseError) and parsing continues, so a single pass over a
+        // malformed .feature file surfaces every distinct structural error
+        // it contains, not just the first. outcome.ok reflects whether
+        // state.errors ended up empty; RunFeature() enforces the
+        // conservative invariant that a non-empty errors vector means ZERO
+        // Scenarios ever execute, regardless of how much of the file parsed
+        // "successfully" around the error(s) - see RunFeature's own doc
+        // comment. outcome.feature is populated either way (useful for
+        // impl::-level parser tests inspecting what recovery did manage to
+        // capture), never consulted for execution when !outcome.ok.
         inline ParseOutcome ParseFeatureText(std::string_view text) {
             const std::vector<std::string_view> lines = SplitLines(text);
             FeatureParseState state;
 
             for (std::size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
-                if (const auto failure = ProcessFeatureLine(state, lines[lineIdx], lineIdx + 1)) {
-                    return *failure;
-                }
+                ProcessFeatureLine(state, lines[lineIdx], lineIdx + 1);
             }
             // A Doc String still open at end-of-file (opening '"""' with no
-            // matching closing '"""') would otherwise silently drop its
+            // matching closing '"""' and no block boundary reached first
+            // either - see ProcessFeatureLine's inDocString corruptive-
+            // resync handling above) would otherwise silently drop its
             // accumulated content (never attached to the step, since that
             // only happens on close) - report it against the OPENING line,
-            // matching MakeParseError's "point at the line the user needs
+            // matching RecordParseError's "point at the line the user needs
             // to fix" convention used everywhere else in this parser.
             if (state.inDocString) {
-                return MakeParseError(state.docStringOpenLine,
-                                       R"(doc string is not closed (missing terminating '"""'))");
+                RecordParseError(state, state.docStringOpenLine,
+                                  R"(doc string is not closed (missing terminating '"""'))");
             }
-            if (const auto failure = FinalizeCurrentScenarioExamples(state)) {
-                return *failure;
-            }
+            FinalizeCurrentScenarioExamples(state);
             FlushScenario(state.feature, state.currentScenario);
             if (!state.haveFeature) {
-                return MakeParseError(0, "no 'Feature:' found");
+                RecordParseError(state, 0, "no 'Feature:' found");
             }
-            ExpandScenarioOutlines(state.feature);
+            const bool ok = state.errors.empty();
+            // Only expand Scenario Outlines when the parse is clean.
+            // Several recovery paths above (see HandleExamplesTableRow)
+            // deliberately leave a malformed Examples: row/table in a
+            // "present but structurally inconsistent" state on purpose
+            // (pushed anyway, to avoid a spurious secondary "must have at
+            // least one data row" cascade) - safe ONLY as long as
+            // SubstitutePlaceholders/ExpandScenarioOutlines never actually
+            // indexes into it, which is exactly what skipping expansion
+            // here guarantees. outcome.feature therefore stays in its
+            // un-expanded, raw-Outline-with-Examples-table shape whenever
+            // !ok - fine for impl::-level parser tests inspecting recovery,
+            // and irrelevant for execution (RunFeature() never touches
+            // parsed.feature when !parsed.ok - see RunFeature's own doc
+            // comment on the conservative zero-scenarios invariant).
+            if (ok) {
+                ExpandScenarioOutlines(state.feature);
+            }
             ParseOutcome outcome;
-            outcome.ok = true;
+            outcome.ok = ok;
+            outcome.errors = std::move(state.errors);
             outcome.feature = std::move(state.feature);
             return outcome;
         }
@@ -2898,6 +3189,25 @@ namespace Gherkin {
         }
 
     } // namespace impl
+
+    // Public alias of the existing internal keyword enum (impl::StepKeyword
+    // above) - deliberately NOT a second, duplicate enum: RegisterStep/
+    // RegisterSteps/StepEntry below need a public-facing name for the same
+    // five keywords already used internally, and aliasing avoids two
+    // enums drifting out of sync.
+    using Keyword = impl::StepKeyword;
+
+    // One step registration's worth of data, for bulk registration via
+    // StepRegistry::RegisterSteps() below. Named StepEntry (not Step) to
+    // avoid reader confusion with the pre-existing, unrelated
+    // BabyBehaveTest::Step. Relies on C++20 aggregate CTAD to deduce F from
+    // the initializer, e.g.: StepEntry{Keyword::Given, "a thing", fn}.
+    template<typename F>
+    struct StepEntry {
+        Keyword keyword = Keyword::Given;
+        std::string pattern;
+        F fn;
+    };
 
     // Consumer-constructed registry of step definitions (Given/When/Then/And/But
     // with {int}/{float}/{string}/{word} placeholders), per-Scenario
@@ -2944,6 +3254,47 @@ namespace Gherkin {
             AddStepDefinition(impl::StepKeyword::But, std::move(pattern), std::move(stepFn));
         }
 
+        // Registers the SAME pattern+callable under several keywords at
+        // once, e.g. an idempotent assertion reachable via both Then and
+        // And. F must be copyable (a fresh copy is registered per keyword -
+        // see the loop below; use RegisterSteps() instead if fn is move-only).
+        // CRITICAL: fn itself is never moved into the loop - each iteration
+        // copies it before dispatching, since the underlying Register*
+        // path consumes its callable by value + internal std::move; moving
+        // fn directly would leave every keyword after the first with a
+        // moved-from callable.
+        template<typename F>
+        void RegisterStep(std::initializer_list<Keyword> keywords, std::string pattern, F stepFn) {
+            for (const Keyword keyword : keywords) {
+                F fnCopy = stepFn; // Fresh copy per keyword - see doc comment above.
+                switch (keyword) {
+                    case Keyword::Given: RegisterGiven(pattern, std::move(fnCopy)); break;
+                    case Keyword::When:  RegisterWhen(pattern, std::move(fnCopy)); break;
+                    case Keyword::Then:  RegisterThen(pattern, std::move(fnCopy)); break;
+                    case Keyword::And:   RegisterAnd(pattern, std::move(fnCopy)); break;
+                    case Keyword::But:   RegisterBut(pattern, std::move(fnCopy)); break;
+                }
+            }
+        }
+
+        // Variadic bulk registration: one call registers any number of
+        // StepEntry<F> values, each with its own (possibly different) F,
+        // e.g.: registry.RegisterSteps(StepEntry{Keyword::Given, "...", fn1},
+        // StepEntry{Keyword::When, "...", fn2}). Deliberately a variadic
+        // PARAMETER PACK, not std::initializer_list<StepEntry<...>>:
+        // initializer_list only ever exposes `const T&`, which is
+        // incompatible with StepFunction being a std::move_only_function
+        // on the C++23-and-later path - a move-only callable inside a
+        // StepEntry could never be moved out of a const initializer_list
+        // element. The parameter pack forwards each entry individually
+        // instead, with no intermediate array and no copyability requirement,
+        // so a move-only lambda (e.g. one capturing a std::unique_ptr)
+        // works here even though it does NOT work with RegisterStep() above.
+        template<typename... Fs>
+        void RegisterSteps(StepEntry<Fs>&&... entries) {
+            (RegisterOneStep(std::move(entries)), ...);
+        }
+
         // Hook registration (tag-filtered AND/subset). Empty tag list means always run.
         // Before hooks run in registration order before Background.
         // After hooks run in registration order (not reversed) after steps.
@@ -2978,6 +3329,25 @@ namespace Gherkin {
             std::shared_ptr<impl::TagExpressionNode> parsed = impl::ParseTagExpression(expression);
             m_afterHooks.push_back(impl::Hook{
                 .tags = {}, .fn = std::move(hookFn), .label = expression, .expression = std::move(parsed) });
+        }
+
+        // Sugar pairing a Before+After hook under the same tag filter in
+        // one call (e.g. timing/logging bracketing a set of scenarios).
+        // Forwards directly to AddBeforeHook+AddAfterHook - no duplicated
+        // dispatch logic, so `before`/`after` share the exact same
+        // registration-order/tag-matching semantics as registering them
+        // separately would.
+        void AddAroundHook(std::vector<std::string> tags, HookFunction before, HookFunction after) {
+            AddBeforeHook(tags, std::move(before));
+            AddAfterHook(std::move(tags), std::move(after));
+        }
+
+        // Expression-based variant of AddAroundHook() above - forwards to
+        // AddBeforeHookExpr+AddAfterHookExpr (see those for the full
+        // expression grammar and registration-time fail-fast behavior).
+        void AddAroundHookExpr(const std::string& expression, HookFunction before, HookFunction after) {
+            AddBeforeHookExpr(expression, std::move(before));
+            AddAfterHookExpr(expression, std::move(after));
         }
 
         // Suite-level hook registration (Feature 8). Unlike AddBeforeHook/
@@ -3082,6 +3452,27 @@ namespace Gherkin {
         }
 
     private:
+        // Dispatches one StepEntry<F> to the Register* method matching its
+        // .keyword. Private helper for RegisterSteps() above. Sink
+        // parameter taken BY VALUE (not StepEntry<F>&&): every call site
+        // passes an rvalue (see RegisterSteps' fold expression), so the
+        // by-value parameter is move-constructed for free, and taking it
+        // by value - rather than by rvalue reference - lets this function
+        // move its individual .pattern/.fn members out independently
+        // (entry.keyword itself is read, not moved) without tripping
+        // cppcoreguidelines-rvalue-reference-param-not-moved, which only
+        // recognizes std::move(entry) as a whole, not member-wise moves.
+        template<typename F>
+        void RegisterOneStep(StepEntry<F> entry) {
+            switch (entry.keyword) {
+                case Keyword::Given: RegisterGiven(std::move(entry.pattern), std::move(entry.fn)); break;
+                case Keyword::When:  RegisterWhen(std::move(entry.pattern), std::move(entry.fn)); break;
+                case Keyword::Then:  RegisterThen(std::move(entry.pattern), std::move(entry.fn)); break;
+                case Keyword::And:   RegisterAnd(std::move(entry.pattern), std::move(entry.fn)); break;
+                case Keyword::But:   RegisterBut(std::move(entry.pattern), std::move(entry.fn)); break;
+            }
+        }
+
         template<typename F>
         void AddStepDefinition(impl::StepKeyword keyword, const std::string& pattern, F stepFn) {
             impl::CompiledStepPattern compiled = impl::CompileStepPattern(pattern);
@@ -3127,6 +3518,11 @@ namespace Gherkin {
         std::string featureName;
         std::vector<TestResult> scenarioResults;
         bool allPassed = true;
+
+        // Convenience for a process main(): 0 if every scenario passed, 1 otherwise.
+        [[nodiscard]] int ExitCode() const {
+            return allPassed ? 0 : 1;
+        }
     };
 
     namespace impl {
@@ -3169,18 +3565,47 @@ namespace Gherkin {
             std::exit(EXIT_FAILURE);
         }
 
-        // Builds the same diagnostic text ReportScenarioFailureAndExit used to
-        // print+exit directly; now returned so the caller can hand it to an
-        // onFailure callback instead (which may or may not exit).
-        inline std::string FormatScenarioFailureMessage(const TestResult& result) {
-            std::string message = "BabyBehave::Gherkin: scenario '" + result.testName + "' failed:";
+        // Builds a single, concise ONE-LINE diagnostic for a failed
+        // Scenario - "<featureLabel>:<scenarioLine>: scenario failed:
+        // '<testName>' - K/N step(s) failed, first: [<stepLabel>]
+        // <stepName>: <message>" plus an optional " (at <location>)" suffix
+        // if the first failing step's location is non-empty. This is a
+        // digest, not a dump: full per-step detail (every StepResult,
+        // passed or failed, with its own message/location) remains
+        // completely unaffected and available via
+        // FeatureResult::scenarioResults[i].steps - this function only
+        // changes what gets funneled through the single onFailure(...) call
+        // for the Scenario (still invoked exactly once per failed Scenario,
+        // never more/fewer times - see RunScenarioWithRetries below, the
+        // only caller). Previously (pre-this-feature) this returned a
+        // multi-line, '\n'-joined blob (one line per failed step) - that
+        // was fine for a human reading raw stderr output but made
+        // onFailure's argument awkward for structured log aggregation
+        // (multi-line log lines, log processors splitting on '\n', etc.);
+        // the one-line digest here is deliberately terse, pointing at the
+        // FIRST failure only, on the theory that a consumer who needs every
+        // failing step's full detail already has it via scenarioResults.
+        inline std::string FormatScenarioFailureMessage(std::string_view featureLabel, const TestResult& result,
+                                                          std::size_t scenarioLine) {
+            std::size_t failedCount = 0;
+            const StepResult* firstFailure = nullptr;
             for (const auto& step : result.steps) {
-                if (step.passed) {
-                    continue;
+                if (!step.passed) {
+                    ++failedCount;
+                    if (firstFailure == nullptr) {
+                        firstFailure = &step;
+                    }
                 }
-                message += "\n  [" + step.stepLabel + "] " + step.stepName + ": " + step.message;
-                if (!step.location.empty()) {
-                    message += " (at " + step.location + ")";
+            }
+            std::string message = std::string(featureLabel) + ":" + std::to_string(scenarioLine) +
+                                    ": scenario failed: '" + result.testName + "' - " +
+                                    std::to_string(failedCount) + "/" + std::to_string(result.steps.size()) +
+                                    " step(s) failed";
+            if (firstFailure != nullptr) {
+                message += ", first: [" + firstFailure->stepLabel + "] " + firstFailure->stepName + ": " +
+                            firstFailure->message;
+                if (!firstFailure->location.empty()) {
+                    message += " (at " + firstFailure->location + ")";
                 }
             }
             return message;
@@ -3341,7 +3766,7 @@ namespace Gherkin {
                                                      .passed = false,
                                                      .message = policy.parseError,
                                                      .location = MakeFeatureLocation(featureLabel, scenario.line, 0) });
-                InvokeOnFailure(onFailure, FormatScenarioFailureMessage(result));
+                InvokeOnFailure(onFailure, FormatScenarioFailureMessage(featureLabel, result, scenario.line));
                 return result;
             }
 
@@ -3364,7 +3789,7 @@ namespace Gherkin {
                     // RunScenarioAttempt, so simply fall out of the loop and
                     // return result as-is, exactly like the pre-retry
                     // behavior did).
-                    InvokeOnFailure(onFailure, FormatScenarioFailureMessage(result));
+                    InvokeOnFailure(onFailure, FormatScenarioFailureMessage(featureLabel, result, scenario.line));
                 }
                 // else: an intermediate (non-final) failed attempt -
                 // deliberately silent, no onFailure call. Loop around and
@@ -3469,7 +3894,18 @@ namespace Gherkin {
                                       bool enableParallelScenarios = false) {
         const impl::ParseOutcome parsed = impl::ParseFeatureText(featureText);
         if (!parsed.ok) {
-            impl::InvokeOnFailure(onFailure, parsed.error);
+            // One onFailure(...) call PER accumulated structural error (see
+            // impl::ParseOutcome/impl::ParseFeatureText) - featureLabel is
+            // prepended here (the parser itself never sees it), giving a
+            // final "<file>:<line>: parse error: <message>" one-liner per
+            // error. Conservative invariant: a non-empty errors vector
+            // means ZERO Scenarios ever execute below - this early return
+            // guarantees that regardless of how many errors there are or
+            // what impl::ParseFeatureText's best-effort parsed.feature
+            // happens to contain.
+            for (const std::string& error : parsed.errors) {
+                impl::InvokeOnFailure(onFailure, std::string(featureLabel) + ":" + error);
+            }
             return FeatureResult{ .featureName = std::string(), .scenarioResults = {}, .allPassed = false };
         }
 
@@ -3553,6 +3989,179 @@ namespace Gherkin {
         }
         return result;
     }
+
+    // Reads an entire .feature file from disk into a std::string. Plain
+    // std::ifstream, ordinary std::filesystem::path semantics (absolute
+    // used as-is, relative resolved against the process's current working
+    // directory) - no build-system/CMake-define dependency of any kind
+    // (contrast with examples/gherkin/LoadFeatureFile.hpp's example-only
+    // helper, which depends on a per-target BABYBEHAVE_GHERKIN_FEATURES_DIR
+    // compile definition; this one does not and must not). Throws
+    // std::runtime_error (with the path in the message) if the file can't
+    // be opened. Does NOT violate "RunFeature reads text only, no file
+    // I/O of its own" - RunFeature() itself is untouched; this is a
+    // separate, optional free function a caller may use to produce the
+    // std::string RunFeature()/FeatureFromFile() ultimately consumes.
+    [[nodiscard]] inline std::string LoadFeatureFile(const std::filesystem::path& path) {
+        std::ifstream file(path);
+        if (!file) {
+            throw std::runtime_error("BabyBehave::Gherkin::LoadFeatureFile: could not open file: " + path.string());
+        }
+        std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        return contents;
+    }
+
+    // Fluent builder wrapping a single RunFeature() call. Unlike RunFeature()
+    // itself (std::string_view, zero-copy), FeatureRun OWNS a std::string
+    // copy of the feature text - deliberately, so a temporary (e.g.
+    // LoadFeatureFile()'s return value) can be handed to Feature()/
+    // FeatureFromFile() safely with no dangling risk. This one extra copy
+    // is paid once per Feature()/FeatureFromFile() call, not once per
+    // Scenario/step.
+    class FeatureRun {
+    public:
+        FeatureRun(std::string featureText, StepRegistry& registry)
+            : m_featureText(std::move(featureText)), m_registry(registry) {}
+
+        // Sets the diagnostic label passed through to RunFeature() (e.g. a filename).
+        FeatureRun& Label(std::string_view label) {
+            m_label = std::string(label);
+            return *this;
+        }
+
+        // Sets the onFailure callback passed through to RunFeature().
+        FeatureRun& OnFailure(GherkinFailureCallback onFailure) {
+            m_onFailure = std::move(onFailure);
+            return *this;
+        }
+
+        // Enables/disables RunFeature()'s enableParallelScenarios flag.
+        //
+        // *** SAFETY WARNING (same caveats as RunFeature()'s
+        // enableParallelScenarios parameter - repeated here in full since
+        // this is a separate entry point a consumer may discover
+        // independently of docs/design/gherkin-support.md) ***:
+        //
+        // 1. The DEFAULT onFailure (impl::DefaultGherkinFailureAction, which
+        //    calls std::exit()) is NOT thread-safe and must not be used with
+        //    Parallel(true) - calling std::exit() concurrently from multiple
+        //    scenario threads is a data race and undefined behavior. Supply
+        //    a non-exiting custom OnFailure() (e.g. a mutex-guarded vector
+        //    collecting messages) whenever Parallel(true) is used.
+        // 2. Serial vs. parallel exception-handling diverges: in serial mode
+        //    a throwing onFailure halts the rest of the Feature immediately;
+        //    in parallel mode every Scenario's std::async task is already
+        //    dispatched up front, so later Scenarios may already be running
+        //    (or finished) by the time an earlier one's onFailure throws -
+        //    only the first (by index) exception is ever observed by the
+        //    caller, and the rest of that task's bookkeeping is lost (though
+        //    every dispatched task still runs to completion, since a
+        //    std::future's destructor blocks until its task finishes).
+        // 3. Per-scenario hook closures (AddBeforeHook/AddAfterHook) run
+        //    concurrently across scenario threads under Parallel(true) - any
+        //    mutable state a hook closure captures by reference/pointer is
+        //    the consumer's own synchronization responsibility; the
+        //    framework does not serialize or lock access to it.
+        // 4. There is no internal thread-pool cap: every Scenario (including
+        //    every expanded row of a Scenario Outline) gets its own
+        //    std::launch::async task/OS thread. A large Examples: table
+        //    combined with Parallel(true) can spawn hundreds of OS threads.
+        //
+        // Consumers enabling Parallel(true) must also link Threads::Threads
+        // in their own CMake target (find_package(Threads REQUIRED)) -
+        // std::async requires platform threading support.
+        FeatureRun& Parallel(bool enable = true) {
+            m_parallel = enable;
+            return *this;
+        }
+
+        // Runs the Feature via RunFeature() - no duplicated logic, this is a
+        // pure forwarder using whatever was configured via Label()/OnFailure()/Parallel().
+        [[nodiscard]] FeatureResult Run() const {
+            return RunFeature(m_featureText, m_registry, m_label, m_onFailure, m_parallel);
+        }
+
+    private:
+        std::string m_featureText;
+        StepRegistry& m_registry;
+        std::string m_label = "<feature>";
+        GherkinFailureCallback m_onFailure = impl::DefaultGherkinFailureAction;
+        bool m_parallel = false;
+    };
+
+    // Factory for FeatureRun from an in-memory feature text (e.g. a raw
+    // string literal). See FeatureRun's doc comment for why this copies
+    // featureText rather than taking a std::string_view like RunFeature().
+    [[nodiscard]] inline FeatureRun Feature(std::string featureText, StepRegistry& registry) {
+        return {std::move(featureText), registry};
+    }
+
+    // Factory for FeatureRun that loads its feature text from disk via
+    // LoadFeatureFile() above, and defaults its Label() to the given path.
+    [[nodiscard]] inline FeatureRun FeatureFromFile(const std::filesystem::path& path, StepRegistry& registry) {
+        return FeatureRun(LoadFeatureFile(path), registry).Label(path.string());
+    }
+
+    // Promotes a mutex+vector+lambda pattern that several examples
+    // (GherkinCustomFailureHandler.cpp, GherkinCollectFailures.cpp,
+    // GherkinBakeryConcurrentOrderProcessing.cpp,
+    // GherkinLibraryConcurrentLending.cpp) already hand-roll identically:
+    // a GherkinFailureCallback that collects every message into a
+    // consumer-owned std::vector<std::string> instead of the default
+    // impl::DefaultGherkinFailureAction's print-and-std::exit() behavior.
+    // Usable directly as RunFeature()'s onFailure argument or
+    // FeatureRun::OnFailure(...) - GherkinFailureCallback is
+    // std::function<void(std::string_view)>, and a CollectingFailureHandler
+    // instance converts to that cleanly (operator() is const and takes
+    // std::string_view, matching the callback signature exactly).
+    //
+    // Deliberately non-exiting - never calls std::exit()/std::abort(),
+    // never throws - which is the entire point: it lets RunFeature() keep
+    // going through every remaining Scenario (and, across multiple
+    // RunFeature() calls, every remaining Feature) instead of the default
+    // callback's hard stop on the first failure.
+    //
+    // Thread-safe by construction (every operator() call takes m_mutex
+    // before touching m_sink), so it is also safe to use as the onFailure
+    // callback under enableParallelScenarios==true/FeatureRun::Parallel() -
+    // see docs/design/gherkin-support.md's "Parallel scenario execution"
+    // section for why the DEFAULT callback is unsafe there (concurrent
+    // std::exit() calls) and why a non-exiting, mutex-guarded callback like
+    // this one is required instead.
+    //
+    // m_sink is stored BY REFERENCE, not owned: the caller keeps their own
+    // std::vector<std::string> alive for at least as long as this handler
+    // (and whatever RunFeature()/FeatureRun call it's passed to) is in use -
+    // identical lifetime contract to the hand-written lambdas this class
+    // replaces, which all captured their vector by reference too.
+    //
+    // m_mutex is a shared_ptr<mutex>, NOT a plain std::mutex member,
+    // deliberately: GherkinFailureCallback is a std::function, whose
+    // constructor from an arbitrary callable requires the target type to
+    // be CopyConstructible (see std::function's Callable requirements) - a
+    // plain std::mutex member would make CollectingFailureHandler itself
+    // non-copy-constructible (std::mutex's copy constructor is deleted),
+    // breaking that requirement outright. A shared_ptr<mutex> keeps
+    // CollectingFailureHandler copyable while guaranteeing every copy
+    // (however many std::function/the caller ends up making) still
+    // synchronizes through the exact same underlying mutex instance -
+    // giving each COPY its own fresh mutex instead would silently defeat
+    // thread-safety (two different mutexes "protecting" one shared m_sink
+    // is equivalent to no synchronization at all).
+    class CollectingFailureHandler {
+    public:
+        explicit CollectingFailureHandler(std::vector<std::string>& sink)
+            : m_sink(sink), m_mutex(std::make_shared<std::mutex>()) {}
+
+        void operator()(std::string_view message) const {
+            const std::scoped_lock<std::mutex> lock(*m_mutex);
+            m_sink.emplace_back(message);
+        }
+
+    private:
+        std::vector<std::string>& m_sink;
+        std::shared_ptr<std::mutex> m_mutex;
+    };
 
 } // namespace Gherkin
 #endif // BABYBEHAVE_DISABLE_GHERKIN

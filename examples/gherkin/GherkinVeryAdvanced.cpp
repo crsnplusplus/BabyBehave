@@ -25,73 +25,79 @@ using namespace BabyBehave::BDD::Reporters;
 // Exit code: 0 (success) - a full happy-path narrative demonstrating
 // the complete machinery in action, including reporters integration.
 
+namespace {
+
+constexpr Key<bool> kSessionValid{"session_valid"};
+constexpr Key<int> kRequests{"requests"};
+
+// ---- Setup steps ----
+bool GivenSessionIsActive(TestContext& ctx) {
+    ctx.Set(kSessionValid, true);
+    ctx.Set(kRequests, 0);
+    std::cout << "    [Given] Session started\n";
+    return true;
+}
+
+bool WhenRequestArrives(TestContext& ctx) {
+    ctx.Mutate(kRequests) += 1;
+    std::cout << "    [When] Request #" << ctx.Get(kRequests) << " processed\n";
+    return true;
+}
+
+bool WhenSessionTimesOut(TestContext& ctx) {
+    ctx.Set(kSessionValid, false);
+    std::cout << "    [When] Session timed out\n";
+    return true;
+}
+
+bool ThenSessionShouldBeActive(TestContext& ctx) {
+    const bool valid = ctx.Get(kSessionValid);
+    std::cout << "    [Then] Verifying session is active: " << (valid ? "YES" : "NO") << "\n";
+    return valid;
+}
+
+bool AndRequestCountShouldBe(TestContext& ctx, int expected) {
+    const int requests = ctx.Get(kRequests);
+    const bool pass = (requests == expected);
+    std::cout << "    [And] Request count check: " << requests << " == " << expected << " ? " << (pass ? "YES" : "NO") << "\n";
+    return pass;
+}
+
+bool ButIDidNotExpectItToFail(TestContext& ctx) {
+    // This step deliberately fails to show collect-failures mode behavior
+    std::cout << "    [But] This step WILL FAIL\n";
+    return false; // Intentional failure
+}
+
+// ---- Before hook for @critical tag ----
+void InitializeCriticalSession(TestContext& ctx) {
+    std::cout << "  [Before @critical] Initializing critical session\n";
+}
+
+// ---- After hook: always runs (even after failure) ----
+void CleanupSession(TestContext& ctx) {
+    std::cout << "  [After] Session cleanup (this runs even after failure)\n";
+}
+
+} // namespace
+
 int main() {
     StepRegistry registry;
 
-    // ---- Setup steps ----
-    registry.RegisterGiven("a session is active", [](TestContext& ctx) -> bool {
-        ctx.Set("session_valid", true);
-        ctx.Set("requests", 0);
-        std::cout << "    [Given] Session started\n";
-        return true;
-    });
+    registry.RegisterGiven("a session is active", GivenSessionIsActive);
+    registry.RegisterStep({Keyword::When, Keyword::And}, "a request arrives", WhenRequestArrives);
+    registry.RegisterWhen("the session times out", WhenSessionTimesOut);
+    registry.RegisterStep({Keyword::Then, Keyword::And}, "the session should be active", ThenSessionShouldBeActive);
+    registry.RegisterAnd("the request count should be {int}", AndRequestCountShouldBe);
+    registry.RegisterBut("I did not expect it to fail", ButIDidNotExpectItToFail);
 
-    auto requestArrivesImpl = [](TestContext& ctx) -> bool {
-        int requests = ctx.Get<int>("requests");
-        ctx.Set("requests", requests + 1);
-        std::cout << "    [When] Request #" << (requests + 1) << " processed\n";
-        return true;
-    };
-
-    registry.RegisterWhen("a request arrives", requestArrivesImpl);
-    registry.RegisterAnd("a request arrives", requestArrivesImpl);
-
-    registry.RegisterWhen("the session times out", [](TestContext& ctx) -> bool {
-        ctx.Set("session_valid", false);
-        std::cout << "    [When] Session timed out\n";
-        return true;
-    });
-
-    registry.RegisterThen("the session should be active", [](TestContext& ctx) -> bool {
-        bool valid = ctx.Get<bool>("session_valid");
-        std::cout << "    [Then] Verifying session is active: " << (valid ? "YES" : "NO") << "\n";
-        return valid;
-    });
-
-    registry.RegisterAnd("the session should be active", [](TestContext& ctx) -> bool {
-        bool valid = ctx.Get<bool>("session_valid");
-        std::cout << "    [And] Verifying session is active: " << (valid ? "YES" : "NO") << "\n";
-        return valid;
-    });
-
-    registry.RegisterAnd("the request count should be {int}", [](TestContext& ctx, int expected) -> bool {
-        int requests = ctx.Get<int>("requests");
-        bool pass = (requests == expected);
-        std::cout << "    [And] Request count check: " << requests << " == " << expected << " ? " << (pass ? "YES" : "NO") << "\n";
-        return pass;
-    });
-
-    registry.RegisterBut("I did not expect it to fail", [](TestContext& ctx) -> bool {
-        // This step deliberately fails to show collect-failures mode behavior
-        std::cout << "    [But] This step WILL FAIL\n";
-        return false; // Intentional failure
-    });
-
-    // ---- Before hook for @critical tag ----
-    registry.AddBeforeHook(
-        {"critical"},
-        [](TestContext& ctx) {
-            std::cout << "  [Before @critical] Initializing critical session\n";
-        }
-    );
-
-    // ---- After hook: always runs (even after failure) ----
-    registry.AddAfterHook(
-        {},
-        [](TestContext& ctx) {
-            std::cout << "  [After] Session cleanup (this runs even after failure)\n";
-        }
-    );
+    // Before/After hooks below use DIFFERENT tag filters ({"critical"} vs
+    // the empty/always-run filter) - AddAroundHook only applies when a
+    // Before+After pair shares one tag filter, so these stay as two
+    // separate registrations, each demonstrating its own concept
+    // (tag-scoped setup vs. unconditional cleanup).
+    registry.AddBeforeHook({"critical"}, InitializeCriticalSession);
+    registry.AddAfterHook({}, CleanupSession);
 
     // --- Feature 1: Happy-path session management ---
     const std::string_view feature1 = R"feature(
@@ -111,7 +117,7 @@ Feature: @critical Session management
 )feature";
 
     std::cout << "========== Running Feature 1: Session Management ==========\n";
-    FeatureResult result1 = RunFeature(feature1, registry, "Feature1");
+    const FeatureResult result1 = Feature(std::string(feature1), registry).Label("Feature1").Run();
     std::cout << "\nFeature 1 completed with " << result1.scenarioResults.size() << " scenario(s).\n";
 
     std::cout << "\n========== Detailed Result Inspection ==========\n";

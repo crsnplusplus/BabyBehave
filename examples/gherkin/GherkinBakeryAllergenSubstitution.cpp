@@ -11,6 +11,17 @@
 // bakery_allergen_substitution.feature, read from disk via
 // LoadFeatureFile() - see GherkinBakeryStandardOrder.cpp's comment for why.
 
+namespace {
+
+// One-line body: a genuinely trivial lambda, left inline rather than
+// promoted to a named function (see the project's naming convention for
+// when a step earns a name).
+bool AndKitchenConfirmsSubstitutionIsNutFree(TestContext& ctx, std::string note) {
+    return note == "nut-free" && !ctx.Get(bakery_steps::kAllergens).empty();
+}
+
+} // namespace
+
 StepRegistry PrepareRegistry() {
     StepRegistry registry = MakeBakeryStepRegistry();
 
@@ -19,10 +30,7 @@ StepRegistry PrepareRegistry() {
     // rather than baked into BakerySteps.hpp (which every other Bakery
     // example also includes, and doesn't need this check).
     StepRegistry kitchenExtras;
-    kitchenExtras.RegisterAnd("the kitchen confirms the substitution is {word}",
-        [](TestContext& ctx, std::string note) -> bool {
-            return note == "nut-free" && !ctx.Get<std::vector<std::string>>("allergens").empty();
-        });
+    kitchenExtras.RegisterAnd("the kitchen confirms the substitution is {word}", AndKitchenConfirmsSubstitutionIsNutFree);
     registry.Merge(kitchenExtras);
 
     return registry;

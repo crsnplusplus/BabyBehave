@@ -37,6 +37,13 @@
 using namespace BabyBehave::BDD;
 using namespace BabyBehave::BDD::Gherkin;
 
+// Explicit alias for the internal parsing/matching namespace (mirrors
+// test_Gherkin_Parser.cpp's own GherkinImpl alias convention) - used below
+// by RunInternalDefensiveGuardsScenario, which calls straight into
+// impl:: functions to exercise a handful of "unreachable in practice"
+// defensive branches (see that scenario's own doc comment).
+namespace GherkinImpl = BabyBehave::BDD::Gherkin::impl;
+
 namespace {
 
 // A GherkinFailureCallback that records every message instead of letting
@@ -1757,7 +1764,7 @@ bool RunStructuralParseErrorsScenario() {
         std::string_view feature;
         std::string_view expectedSubstring;
     };
-    const std::array<Case, 12> cases{ {
+    const std::array<Case, 14> cases{ {
         { "Multiple 'Feature:' sections", R"feature(
 Feature: First
 Feature: Second
@@ -1852,6 +1859,38 @@ Feature: Unclosed doc string
     body never closes
 )feature",
           "doc string is not closed" },
+        // Unlike the case right above (only discovered at EOF), this one
+        // hits impl::ConsumeDocStringLine's own early corruptive detection:
+        // a NEW 'Scenario:' line arrives before the closing '"""' - the
+        // unclosed doc string is reported right there (against its OPENING
+        // line) and parsing resumes normally with the new Scenario, instead
+        // of silently swallowing it as more doc string content.
+        { "Doc string unclosed, detected early at the next Scenario: boundary", R"feature(
+Feature: Unclosed doc string hits a new Scenario before EOF
+  Scenario: Opens but a new Scenario begins first
+    Given a step
+    """
+    body never closes
+  Scenario: A second scenario that parses normally
+    Given a step
+)feature",
+          "doc string is not closed" },
+        // Mirrors the case above but for a REJECTED doc string open attempt
+        // (no preceding step) instead of a genuinely-open one - see
+        // impl::ConsumeSkippedRejectedDocStringLine's own corruptive-resync
+        // handling: a NEW 'Scenario:' line reached before the matching
+        // closing '"""' stops the swallow and re-dispatches that boundary
+        // line normally, rather than letting the rejected attempt eat the
+        // whole next Scenario.
+        { "Rejected doc string open swallow stops at a Scenario: boundary", R"feature(
+Feature: Rejected doc string swallow stops at a block boundary
+  Scenario: Doc string with no preceding step
+    """
+    stray content, never attached
+  Scenario: A second scenario that parses normally
+    Given a step
+)feature",
+          "doc string with no preceding step" },
         { "No 'Feature:' section anywhere in the text", "Just some free text, no Feature: line at all.\n",
           "no 'Feature:' found" },
     } };
@@ -2362,6 +2401,211 @@ Feature: Outline placeholder with no matching column
     return asExpected;
 }
 
+// ---------------------------------------------------------------------
+// Internal defensive guards (v0.9.1 100%-coverage closure): a handful of
+// impl::-level branches this codebase's own comments already document as
+// "unreachable in practice" - defensive invariant-guards kept only so the
+// surrounding code compiles/never dereferences something empty, never
+// actually reachable through StepRegistry::AddStepDefinition's registration-
+// time validation or ParseFeatureText's own state machine. Called here
+// directly with deliberately invariant-violating state - the UT-level
+// analogue is test_Gherkin_Parser.cpp's own GherkinInternalDefensiveGuards
+// test suite, which this mirrors one-for-one so BOTH independent coverage
+// measurements (UT and BBH - see this file's own header comment) reach
+// these lines, not just one of them.
+// ---------------------------------------------------------------------
+
+bool RunInternalDefensiveGuardsScenario() {
+    bool asExpected = true;
+
+    // impl::InvokeStepNoRawArg's "captured argument count does not match
+    // step definition" branch: unreachable via AddStepDefinition/TryMatch,
+    // which always keep captures.size() and paramCount in lockstep whenever
+    // rawArgKind == RawArgumentKind::None (AddStepDefinition throws at
+    // registration time otherwise).
+    {
+        auto stepFn = [](TestContext&, int) -> bool { return true; };
+        using F = decltype(stepFn);
+        using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+        TestContext ctx;
+        const std::vector<std::string> captures; // size 0, but paramCount is 1.
+        const bool caseOk = !GherkinImpl::InvokeStepNoRawArg<ArgsTuple, 1, false>(stepFn, ctx, captures);
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[InvokeStepNoRawArg mismatch]: expected false\n";
+        }
+    }
+
+    // impl::InvokeStepWithRawArg's two "captured argument count does not
+    // match step definition" branches (DataTable-sink and std::string-sink).
+    {
+        auto stepFn = [](TestContext&, int, const DataTable&) -> bool { return true; };
+        using F = decltype(stepFn);
+        using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+        TestContext ctx;
+        const std::vector<std::string> captures; // size 0, but capturesN (paramCount - 1) is 1.
+        const GherkinImpl::RawArgument rawArgument{};
+        const bool caseOk = !GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 2>(stepFn, ctx, captures, rawArgument);
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[InvokeStepWithRawArg DataTable mismatch]: expected false\n";
+        }
+    }
+    {
+        auto stepFn = [](TestContext&, int, const std::string&) -> bool { return true; };
+        using F = decltype(stepFn);
+        using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+        TestContext ctx;
+        const std::vector<std::string> captures; // size 0, but capturesN (paramCount - 1) is 1.
+        const GherkinImpl::RawArgument rawArgument{};
+        const bool caseOk = !GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 2>(stepFn, ctx, captures, rawArgument);
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[InvokeStepWithRawArg std::string mismatch]: expected false\n";
+        }
+    }
+
+    // impl::InvokeStepWithRawArg's final "not a recognized raw-argument
+    // type" arm: StepDefinitionRawArgKind only ever returns a non-None kind
+    // when F's real trailing parameter is DataTable or std::string (else it
+    // throws at registration time), so InvokeStepWithRawArg is never
+    // actually CALLED for an F like this one through AddStepDefinition/
+    // MakeStepThunk - even though it IS instantiated (MakeStepThunk's lambda
+    // body references both branches unconditionally for every F). This is
+    // an ordinary placeholder-only step definition (last parameter is plain
+    // int), used all over this codebase; this calls its already-compiled
+    // InvokeStepWithRawArg instantiation directly instead of through that
+    // lambda.
+    {
+        auto stepFn = [](TestContext&, int) -> bool { return true; };
+        using F = decltype(stepFn);
+        using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+        TestContext ctx;
+        const std::vector<std::string> captures{ "5" };
+        const GherkinImpl::RawArgument rawArgument{};
+        const bool caseOk = !GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 1>(stepFn, ctx, captures, rawArgument);
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[InvokeStepWithRawArg unrecognized type]: expected false\n";
+        }
+    }
+
+    // impl::InvokeStepWithRawArg's "paramCount == 0" else-branch:
+    // AddStepDefinition only ever computes a non-None rawArgKind when
+    // paramCount >= 1, so a zero-parameter step definition (very common - a
+    // Given/When/Then with no placeholder captures at all) always keeps
+    // rawArgKind == None, and this runtime `if (rawArgKind == None) return
+    // InvokeStepNoRawArg...` branch in MakeStepThunk's lambda never even
+    // calls InvokeStepWithRawArg for it - but the function IS still
+    // instantiated (and compiled) for such an F, same reasoning as above.
+    {
+        auto stepFn = [](TestContext&) -> bool { return true; };
+        using F = decltype(stepFn);
+        using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+        TestContext ctx;
+        const std::vector<std::string> captures;
+        const GherkinImpl::RawArgument rawArgument{};
+        const bool caseOk = !GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 0>(stepFn, ctx, captures, rawArgument);
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[InvokeStepWithRawArg zero param count]: expected false\n";
+        }
+    }
+
+    // impl::ResolveStepTarget's "no Scenario in progress" throw: unreachable
+    // via ProcessFeatureLine, which always resets lastStepTarget before
+    // currentScenario is ever swapped/flushed - so a StepTarget with
+    // inBackground == false is only ever produced while currentScenario is
+    // engaged.
+    {
+        GherkinImpl::FeatureParseState state;
+        const GherkinImpl::StepTarget target{ .inBackground = false, .index = 0 };
+        bool threw = false;
+        try {
+            std::ignore = GherkinImpl::ResolveStepTarget(state, target);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        asExpected = asExpected && threw;
+        if (!threw) {
+            std::cerr << "  InternalDefensiveGuards[ResolveStepTarget]: expected std::logic_error\n";
+        }
+    }
+
+    // impl::HandleDataTableLine's "data table with no preceding step" branch
+    // reached while state.inDataTable is already true: unreachable via
+    // ProcessFeatureLine, which only ever sets inDataTable true right after
+    // lastStepTarget is set (both cleared together on every context change).
+    {
+        GherkinImpl::FeatureParseState state;
+        state.inDataTable = true;
+        state.lastStepTarget.reset();
+        GherkinImpl::HandleDataTableLine(state, "| a | b |", 7);
+        const bool caseOk = state.errors.size() == 1 &&
+                             state.errors.front().find("data table with no preceding step") != std::string::npos &&
+                             !state.inDataTable && state.skipMalformedTableLines;
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[HandleDataTableLine]: errors.size()=" << state.errors.size() << '\n';
+        }
+    }
+
+    // impl::HandleExamplesTableRow's "!pendingExamples" auto-init guard:
+    // unreachable via ProcessFeatureLine, which only ever routes here while
+    // state.inExamplesTable is true, which is only ever set true together
+    // with state.pendingExamples being engaged.
+    {
+        GherkinImpl::FeatureParseState state;
+        state.pendingExamples.reset();
+        GherkinImpl::HandleExamplesTableRow(state, "| a | b |", 3);
+        const bool caseOk = state.pendingExamples.has_value() &&
+                            state.pendingExamples->header == std::vector<std::string>{ "a", "b" } &&
+                            state.haveExamplesHeader;
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[HandleExamplesTableRow]: pendingExamples.has_value()="
+                       << state.pendingExamples.has_value() << '\n';
+        }
+    }
+
+    // impl::HandleDocStringLine's closing-delimiter "no preceding step"
+    // guard: unreachable via ProcessFeatureLine, since reaching a CLOSING
+    // '"""' with state.inDocString true implies the OPENING '"""' already
+    // validated state.lastStepTarget (the only place state.inDocString is
+    // ever set true).
+    {
+        GherkinImpl::FeatureParseState state;
+        state.inDocString = true;
+        state.docStringLines = { "orphaned content" };
+        state.lastStepTarget.reset();
+        GherkinImpl::HandleDocStringLine(state, R"(""")", R"(""")", 9);
+        const bool caseOk = state.errors.size() == 1 &&
+                             state.errors.front().find("doc string with no preceding step") != std::string::npos &&
+                             !state.inDocString && state.docStringLines.empty();
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[HandleDocStringLine]: errors.size()=" << state.errors.size() << '\n';
+        }
+    }
+
+    // impl::EvaluateTagExpression's exhaustive-switch trailing "return
+    // false": every TagExpressionNode ParseTagExpression ever produces has
+    // op set to one of the 4 real enumerators, so this is genuinely
+    // unreachable via any parser-built node - only a corrupted op value
+    // (impossible via ParseTagExpression itself) falls through to it.
+    {
+        const GherkinImpl::TagExpressionNode node{
+            .op = static_cast<GherkinImpl::TagExprOp>(99), .tagName = "", .left = nullptr, .right = nullptr };
+        const bool caseOk = !GherkinImpl::EvaluateTagExpression(node, {});
+        asExpected = asExpected && caseOk;
+        if (!caseOk) {
+            std::cerr << "  InternalDefensiveGuards[EvaluateTagExpression]: expected false\n";
+        }
+    }
+
+    return asExpected;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2470,6 +2714,8 @@ int main(int argc, char** argv) {
                     RunUnterminatedAngleBracketPlaceholderScenario(), passCount, totalCount);
     ReportScenario("OutlinePlaceholderWithNoMatchingColumn: a well-formed '<name>' not in the Examples header",
                     RunOutlinePlaceholderWithNoMatchingColumnScenario(), passCount, totalCount);
+    ReportScenario("InternalDefensiveGuards: impl:: branches unreachable in practice, called directly (white-box)",
+                    RunInternalDefensiveGuardsScenario(), passCount, totalCount);
 
     std::cout << '\n' << passCount << "/" << totalCount << " Gherkin scenarios behaved as expected\n";
 

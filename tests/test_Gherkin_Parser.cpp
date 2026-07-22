@@ -29,6 +29,26 @@
 
 namespace GherkinImpl = BabyBehave::BDD::Gherkin::impl;
 
+namespace {
+
+// GherkinImpl::ParseOutcome::errors is a vector (parsing now accumulates
+// every distinct structural error instead of stopping at the first one -
+// see ParseOutcome's doc comment in bdd.hpp). This helper is only for
+// gtest diagnostic streaming (`<< JoinErrors(outcome.errors)`); test
+// assertions that need to inspect an individual message should index
+// outcome.errors directly (typically after asserting its exact size, to
+// also positively confirm no unintended cascade happened).
+std::string JoinErrors(const std::vector<std::string>& errors) {
+    std::string joined;
+    for (const std::string& error : errors) {
+        if (!joined.empty()) joined += " | ";
+        joined += error;
+    }
+    return joined;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------
 // Accepted constructs: Feature:/Background:/Scenario:/steps/tags/comments
 // ---------------------------------------------------------------------
@@ -42,7 +62,7 @@ Feature: Shopping basket
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     EXPECT_EQ(outcome.feature.name, "Shopping basket");
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     const auto& scenario = outcome.feature.scenarios[0];
@@ -69,7 +89,7 @@ Feature: Shopping basket
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     // Only the two real step lines should have been picked up; every
     // comment/blank line above and between them must be silently skipped,
@@ -95,7 +115,7 @@ Feature: Tagged feature
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.tags.size(), 1u);
     EXPECT_EQ(outcome.feature.tags[0], "featuretag");
     ASSERT_EQ(outcome.feature.scenarios[0].tags.size(), 1u);
@@ -115,7 +135,7 @@ Feature: Multi-tag feature
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     const auto& tags = outcome.feature.scenarios[0].tags;
     ASSERT_EQ(tags.size(), 3u);
     EXPECT_EQ(tags[0], "slow");
@@ -136,7 +156,7 @@ Feature: Coffee machine
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.background.size(), 2u);
     EXPECT_EQ(outcome.feature.background[0].text, "a freshly booted coffee machine");
     EXPECT_EQ(outcome.feature.background[1].text, "a full water tank");
@@ -159,7 +179,7 @@ Feature: Coffee machine
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
     EXPECT_EQ(outcome.feature.scenarios[0].name, "First");
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
@@ -176,7 +196,7 @@ Feature: Synonyms
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     EXPECT_EQ(outcome.feature.scenarios[0].name, "Using Example instead of Scenario");
 }
@@ -194,7 +214,7 @@ Feature: Keywords
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     const auto& steps = outcome.feature.scenarios[0].steps;
     ASSERT_EQ(steps.size(), 5u);
     EXPECT_EQ(steps[0].keyword, GherkinImpl::StepKeyword::Given);
@@ -235,7 +255,7 @@ Feature: Location tracking
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
 
     ASSERT_EQ(outcome.feature.background.size(), 1u);
     EXPECT_EQ(outcome.feature.background[0].line, 4u);
@@ -264,7 +284,7 @@ TEST(GherkinParser, CRLFLineEndingsAreTolerated) {
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     EXPECT_EQ(outcome.feature.name, "CRLF");
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
@@ -285,7 +305,7 @@ Feature: Basket
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     EXPECT_EQ(outcome.feature.name, "Basket");
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
@@ -306,7 +326,12 @@ Scenario: Orphaned scenario
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("no 'Feature:' found"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("no 'Feature:' found"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, RejectsMultipleFeatureSections) {
@@ -320,7 +345,12 @@ Feature: Second
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("multiple 'Feature:' sections"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("multiple 'Feature:' sections"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, RejectsStepOutsideBackgroundOrScenario) {
@@ -334,7 +364,12 @@ Feature: Misplaced step
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("step found outside of a Background:/Scenario:"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("step found outside of a Background:/Scenario:"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, RejectsRuleConstruct) {
@@ -348,7 +383,12 @@ Feature: With a Rule
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("'Rule:' is not supported"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("'Rule:' is not supported"), std::string::npos) << outcome.errors.front();
 }
 
 // ---------------------------------------------------------------------
@@ -389,7 +429,7 @@ Feature: Basket
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
 
     const auto& row1 = outcome.feature.scenarios[0];
@@ -438,7 +478,7 @@ Feature: Unterminated placeholder
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     EXPECT_EQ(outcome.feature.scenarios[0].steps[0].text, "a value of <x and more");
 }
@@ -456,7 +496,7 @@ Feature: Synonyms
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     EXPECT_EQ(outcome.feature.scenarios[0].name, "Templated <thing> (Examples row 1)");
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
@@ -481,8 +521,18 @@ Feature: Mismatch
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("line 8:"), std::string::npos) << outcome.error;
-    EXPECT_NE(outcome.error.find("cell(s)"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    // RecordParseError's format is "<lineNo>: parse error: <message>" (the
+    // "<file>:" label prefix is only prepended later, by RunFeature() -
+    // see ParseErrorsIncludeTheRealLineNumber below for that split
+    // responsibility spelled out explicitly), so the line number shows up
+    // as a bare "8:" prefix rather than the literal text "line 8:".
+    EXPECT_NE(outcome.errors.front().find("8: parse error:"), std::string::npos) << outcome.errors.front();
+    EXPECT_NE(outcome.errors.front().find("cell(s)"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, ScenarioOutlineWithNoExamplesAtAllIsAParseError) {
@@ -495,7 +545,12 @@ Feature: Missing examples
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("has no 'Examples:'/'Scenarios:' table"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("has no 'Examples:'/'Scenarios:' table"), std::string::npos) << outcome.errors.front();
 }
 
 // Regression coverage: impl::FinalizeCurrentScenarioExamples's "no
@@ -518,7 +573,12 @@ Feature: Missing examples before another Scenario
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("has no 'Examples:'/'Scenarios:' table"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("has no 'Examples:'/'Scenarios:' table"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, ScenarioOutlineWithNoExamplesFollowedByBackgroundIsAParseError) {
@@ -534,7 +594,12 @@ Feature: Missing examples before a Background
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("has no 'Examples:'/'Scenarios:' table"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("has no 'Examples:'/'Scenarios:' table"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, ExamplesWithHeaderOnlyAndZeroDataRowsIsAParseError) {
@@ -550,7 +615,12 @@ Feature: Empty examples
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("at least one data row"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("at least one data row"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, ExamplesAfterAPlainScenarioNotAnOutlineIsAParseError) {
@@ -567,8 +637,13 @@ Feature: Not an outline
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("without a preceding 'Scenario Outline:'/'Scenario Template:'"), std::string::npos)
-        << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("without a preceding 'Scenario Outline:'/'Scenario Template:'"), std::string::npos)
+        << outcome.errors.front();
 }
 
 TEST(GherkinParser, MultipleScenarioOutlinesEachExpandIndependentlyPreservingDeclarationOrder) {
@@ -595,7 +670,7 @@ Feature: Multiple outlines
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 4u);
     EXPECT_EQ(outcome.feature.scenarios[0].name, "First <n> (Examples row 1)");
     EXPECT_EQ(outcome.feature.scenarios[1].name, "First <n> (Examples row 2)");
@@ -621,7 +696,7 @@ Feature: EOF inside examples
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     EXPECT_EQ(outcome.feature.scenarios[0].name, "Ends abruptly <thing> (Examples row 1)");
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
@@ -640,7 +715,7 @@ TEST(GherkinParser, CRLFLineEndingsInsideAnExamplesRowAreTolerated) {
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     EXPECT_EQ(outcome.feature.scenarios[0].name, "CRLF <thing> (Examples row 1)");
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
@@ -673,7 +748,7 @@ Feature: Multiple examples blocks
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 4u);
     EXPECT_EQ(outcome.feature.scenarios[0].steps[0].text, "step 1");
     EXPECT_EQ(outcome.feature.scenarios[1].steps[0].text, "step 2");
@@ -701,7 +776,12 @@ Feature: Mismatched second block
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("cell(s)"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("cell(s)"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, StepKeywordAfterExamplesTableOnSameOutlineIsAParseError) {
@@ -726,7 +806,12 @@ Feature: Step after examples
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("step keyword found after"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("step keyword found after"), std::string::npos) << outcome.errors.front();
 }
 
 // ---------------------------------------------------------------------
@@ -750,7 +835,7 @@ Feature: Data tables
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
     const GherkinImpl::ParsedStep& step = outcome.feature.scenarios[0].steps[0];
@@ -776,7 +861,7 @@ Feature: Data tables in Background
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.background.size(), 1u);
     const GherkinImpl::ParsedStep& backgroundStep = outcome.feature.background[0];
     ASSERT_TRUE(std::holds_alternative<BabyBehave::BDD::Gherkin::DataTable>(backgroundStep.rawArgument));
@@ -797,7 +882,12 @@ Feature: No preceding step
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("data table with no preceding step"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("data table with no preceding step"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, DataTableWithNoPrecedingStepRightAfterFeatureIsAParseError) {
@@ -810,7 +900,12 @@ Feature: No preceding step at all
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("data table with no preceding step"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("data table with no preceding step"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, SecondDataTableBlockOnTheSameStepIsAParseError) {
@@ -832,7 +927,12 @@ Feature: Two tables on one step
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("step already has an argument"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("step already has an argument"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, ExamplesTableAndDataTableCoexistWithoutInterference) {
@@ -858,7 +958,7 @@ Feature: Outline with both constructs
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
     for (const auto& row : outcome.feature.scenarios) {
         ASSERT_EQ(row.steps.size(), 2u);
@@ -890,8 +990,13 @@ Feature: Ragged data table (too many cells)
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("data table row has 3 cell(s), expected 2 (from header)"), std::string::npos)
-        << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("data table row has 3 cell(s), expected 2 (from header)"), std::string::npos)
+        << outcome.errors.front();
 }
 
 TEST(GherkinParser, DataTableRowWithTooFewCellsIsAParseError) {
@@ -906,8 +1011,13 @@ Feature: Ragged data table (too few cells)
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("data table row has 1 cell(s), expected 2 (from header)"), std::string::npos)
-        << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("data table row has 1 cell(s), expected 2 (from header)"), std::string::npos)
+        << outcome.errors.front();
 }
 
 TEST(GherkinParser, DataTableWithConsistentCellCountsAcrossManyRowsParsesFine) {
@@ -928,7 +1038,7 @@ Feature: Consistent data table
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
     const auto& table = std::get<BabyBehave::BDD::Gherkin::DataTable>(outcome.feature.scenarios[0].steps[0].rawArgument);
     ASSERT_EQ(table.RowCount(), 4u);
@@ -949,7 +1059,7 @@ Feature: Escaped cells
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     const auto& table = std::get<BabyBehave::BDD::Gherkin::DataTable>(outcome.feature.scenarios[0].steps[0].rawArgument);
     ASSERT_EQ(table.RowCount(), 1u);
     EXPECT_EQ(table.Header(), (std::vector<std::string>{ "name", "note" }));
@@ -969,7 +1079,7 @@ Feature: Escaped examples cell
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     EXPECT_EQ(outcome.feature.scenarios[0].steps[0].text, "a|b");
 }
@@ -1028,6 +1138,14 @@ TEST(GherkinDataTable, HeaderAndRowThrowOutOfRangeForInvalidIndices) {
 
 TEST(GherkinParser, ParseErrorsIncludeTheRealLineNumber) {
     // "Rule:" is on line 3 (1: "", 2: "Feature: ...", 3: "  Rule: ...").
+    // Each impl::ParseOutcome::errors entry is "<lineNo>: parse error:
+    // <message>" (RecordParseError) - it is RunFeature() that later
+    // prepends the "<featureLabel>:" file label to get the full
+    // "<file>:<line>: parse error: <message>" form (see RunFeature's parse
+    // error loop in bdd.hpp and GherkinIntegrationDeathTest.
+    // MalformedFeatureFailsHardThroughRunFeature /
+    // CustomFailureCallbackForParseErrorReturnsInsteadOfExiting in
+    // test_Gherkin_Integration.cpp, which check that end-to-end label).
     constexpr std::string_view text = R"FEATURE(
 Feature: Line-numbered error
   Rule: Some rule
@@ -1036,7 +1154,12 @@ Feature: Line-numbered error
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("line 3:"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("3: parse error:"), std::string::npos) << outcome.errors.front();
 }
 
 // ---------------------------------------------------------------------
@@ -1075,7 +1198,7 @@ Feature: Article publishing
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 2u);
     const GherkinImpl::ParsedStep& step = outcome.feature.scenarios[0].steps[0];
@@ -1100,7 +1223,7 @@ Feature: Doc strings in Background
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.background.size(), 1u);
     const GherkinImpl::ParsedStep& backgroundStep = outcome.feature.background[0];
     ASSERT_TRUE(std::holds_alternative<std::string>(backgroundStep.rawArgument));
@@ -1122,7 +1245,12 @@ Feature: No preceding step
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("doc string with no preceding step"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("doc string with no preceding step"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, SecondDocStringBlockOnTheSameStepIsAParseError) {
@@ -1141,7 +1269,12 @@ Feature: Two doc strings on one step
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("step already has an argument"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("step already has an argument"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, DocStringOnAStepThatAlreadyHasADataTableIsAParseError) {
@@ -1163,7 +1296,12 @@ Feature: Data table then doc string
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("step already has an argument"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("step already has an argument"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, DataTableOnAStepThatAlreadyHasADocStringIsAParseError) {
@@ -1184,7 +1322,12 @@ Feature: Doc string then data table
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("step already has an argument"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("step already has an argument"), std::string::npos) << outcome.errors.front();
 }
 
 TEST(GherkinParser, DocStringContentContainingPipeAndHashCharactersIsNotMisparsed) {
@@ -1205,7 +1348,7 @@ Feature: Doc string with table-/comment-like content
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 2u);
     const GherkinImpl::ParsedStep& step = outcome.feature.scenarios[0].steps[0];
     ASSERT_TRUE(std::holds_alternative<std::string>(step.rawArgument));
@@ -1224,7 +1367,64 @@ Feature: Unclosed doc string
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
     ASSERT_FALSE(outcome.ok);
-    EXPECT_NE(outcome.error.find("doc string is not closed"), std::string::npos) << outcome.error;
+    // Exactly one accumulated error - positively confirms this malformed
+    // construct's recovery path (point/intermediate/corruptive, see
+    // ParseOutcome's doc comment) does not cascade into spurious extra
+    // errors nor silently swallow the real one.
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("doc string is not closed"), std::string::npos) << outcome.errors.front();
+}
+
+// Unlike UnclosedDocStringIsAParseError above (only discovered at EOF), this
+// one hits impl::ConsumeDocStringLine's own early corruptive detection: a
+// NEW 'Scenario:' line arrives before the closing '"""' - the unclosed Doc
+// String is reported right there (against its OPENING line), and parsing
+// resumes normally with the new Scenario instead of silently swallowing it
+// as more Doc String content.
+TEST(GherkinParser, UnclosedDocStringIsDetectedEarlyAtANewScenarioBoundary) {
+    constexpr std::string_view text = R"FEATURE(
+Feature: Unclosed doc string hits a new Scenario before EOF
+  Scenario: Opens but a new Scenario begins first
+    Given a step
+    """
+    body never closes
+  Scenario: A second scenario that parses normally
+    Given a step
+)FEATURE";
+
+    const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
+
+    ASSERT_FALSE(outcome.ok);
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("doc string is not closed"), std::string::npos) << outcome.errors.front();
+    ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
+    EXPECT_EQ(outcome.feature.scenarios[1].steps.size(), 1u);
+}
+
+// Mirrors the case above but for a REJECTED doc string open attempt (no
+// preceding step) instead of a genuinely-open one - see
+// impl::ConsumeSkippedRejectedDocStringLine's own corruptive-resync
+// handling: a NEW 'Scenario:' line reached before the matching closing '"""'
+// stops the swallow and re-dispatches that boundary line normally, rather
+// than letting the rejected attempt eat the whole next Scenario.
+TEST(GherkinParser, RejectedDocStringOpenSwallowStopsAtANewScenarioBoundary) {
+    constexpr std::string_view text = R"FEATURE(
+Feature: Rejected doc string swallow stops at a block boundary
+  Scenario: Doc string with no preceding step
+    """
+    stray content, never attached
+  Scenario: A second scenario that parses normally
+    Given a step
+)FEATURE";
+
+    const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
+
+    ASSERT_FALSE(outcome.ok);
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("doc string with no preceding step"), std::string::npos)
+        << outcome.errors.front();
+    ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
+    EXPECT_EQ(outcome.feature.scenarios[1].steps.size(), 1u);
 }
 
 TEST(GherkinParser, ExpandScenarioOutlinesCopiesDocStringVerbatimToEveryExpandedRow) {
@@ -1251,7 +1451,7 @@ Feature: Outline with a doc string
 
     const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
 
-    ASSERT_TRUE(outcome.ok) << outcome.error;
+    ASSERT_TRUE(outcome.ok) << JoinErrors(outcome.errors);
     ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
     for (const auto& row : outcome.feature.scenarios) {
         ASSERT_EQ(row.steps.size(), 2u);
@@ -1261,6 +1461,131 @@ Feature: Outline with a doc string
     }
     EXPECT_EQ(outcome.feature.scenarios[0].steps[1].text, "I publish apple");
     EXPECT_EQ(outcome.feature.scenarios[1].steps[1].text, "I publish orange");
+}
+
+// ---------------------------------------------------------------------
+// Multi-error accumulation (impl::ParseOutcome::errors): every test above
+// this section only ever exercises ONE malformed construct per ".feature"
+// text, and every one of them now positively asserts outcome.errors.size()
+// == 1u to rule out an unintended cascade. The tests below instead
+// deliberately combine SEVERAL genuinely independent structural errors,
+// spread across all three recovery categories (point/intermediate/
+// corruptive - see ParseOutcome's doc comment in bdd.hpp), in a single
+// ".feature" text, to prove the parser really does keep going after each
+// one and reports the whole set in one pass - neither stopping early nor
+// swallowing/duplicating any of them.
+// ---------------------------------------------------------------------
+
+TEST(GherkinParser, AccumulatesSeveralIndependentStructuralErrorsInOnePass) {
+    // Four deliberately unrelated malformed constructs, each belonging to
+    // a different call site: an unsupported 'Rule:' line (POINT), a Data
+    // Table with no preceding step at the very start of a Scenario
+    // (INTERMEDIATE - the second pipe line must be silently skipped, not
+    // reported again), an Examples: row cell-count mismatch in a Scenario
+    // Outline (POINT, and must NOT cascade into "must have at least one
+    // data row" - see HandleExamplesTableRow's row-mismatch branch), and a
+    // Data Table row cell-count mismatch in a later, unrelated Scenario
+    // (POINT). None of these four can plausibly influence any of the
+    // others' outcome - the parser must report exactly four errors, no
+    // more, no fewer.
+    constexpr std::string_view text = R"FEATURE(
+Feature: Several independent errors
+  Rule: Not supported here
+
+  Scenario: Has an orphaned table
+    | name  |
+    | apple |
+
+  Scenario Outline: Templated <n>
+    Given step <n>
+
+  Examples:
+    | n |
+    | 1 | 2 |
+
+  Scenario: Has a ragged table
+    Given the following items
+      | name | qty |
+      | pear |
+)FEATURE";
+
+    const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
+
+    ASSERT_FALSE(outcome.ok);
+    ASSERT_EQ(outcome.errors.size(), 4u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors[0].find("'Rule:' is not supported"), std::string::npos) << outcome.errors[0];
+    EXPECT_NE(outcome.errors[1].find("data table with no preceding step"), std::string::npos) << outcome.errors[1];
+    EXPECT_NE(outcome.errors[2].find("cell(s)"), std::string::npos) << outcome.errors[2];
+    EXPECT_NE(outcome.errors[3].find("data table row has 1 cell(s), expected 2 (from header)"), std::string::npos)
+        << outcome.errors[3];
+}
+
+TEST(GherkinParser, UnclosedDocStringResyncsAtNextScenarioWithoutHidingThatScenariosOwnError) {
+    // The textbook CORRUPTIVE case: an unclosed Doc String must not be
+    // allowed to silently swallow every subsequent line as bogus Doc
+    // String "content" all the way to EOF - doing so would hide any
+    // genuinely independent error in a LATER Scenario entirely (a much
+    // worse outcome than just missing the Doc String's own error). Instead
+    // the parser must resync at the next block boundary (here, the
+    // following 'Scenario:' line), report the Doc String as unclosed
+    // against its OWN opening line, and then parse Scenario B normally -
+    // including reporting ITS OWN, entirely unrelated Data Table row
+    // mismatch. Exactly two errors are expected: one per Scenario, neither
+    // one swallowing the other.
+    constexpr std::string_view text = R"FEATURE(
+Feature: Doc string resync
+  Scenario: A
+    Given the article body is:
+      """
+      never closed
+
+  Scenario: B
+    Given the following items
+      | col1 | col2 |
+      | onecell |
+)FEATURE";
+
+    const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
+
+    ASSERT_FALSE(outcome.ok);
+    ASSERT_EQ(outcome.errors.size(), 2u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors[0].find("doc string is not closed"), std::string::npos) << outcome.errors[0];
+    EXPECT_NE(outcome.errors[1].find("data table row has 1 cell(s), expected 2 (from header)"), std::string::npos)
+        << outcome.errors[1];
+    // Scenario B was parsed as its own, independent Scenario (not silently
+    // absorbed as Doc String content) - the resync worked.
+    ASSERT_EQ(outcome.feature.scenarios.size(), 2u);
+    EXPECT_EQ(outcome.feature.scenarios[1].name, "B");
+}
+
+TEST(GherkinParser, MalformedDataTableWithNoPrecedingStepSkipsOnlyItsOwnContiguousRowsWithoutSpammingOneErrorPerRow) {
+    // INTERMEDIATE recovery: a malformed table (here, one with no
+    // preceding step to attach to) must be recorded ONCE, with every
+    // remaining contiguous '|'-prefixed line of that SAME table silently
+    // skipped - never one error per row - and normal parsing must resume
+    // cleanly at the first non-table line afterwards (proven here by the
+    // trailing step successfully attaching to the Scenario).
+    constexpr std::string_view text = R"FEATURE(
+Feature: Malformed table with no preceding step
+  Scenario: A
+    | x | y |
+    | 1 | 2 |
+    | 3 | 4 |
+  Given a step right after the malformed table
+)FEATURE";
+
+    const GherkinImpl::ParseOutcome outcome = GherkinImpl::ParseFeatureText(text);
+
+    ASSERT_FALSE(outcome.ok);
+    ASSERT_EQ(outcome.errors.size(), 1u) << JoinErrors(outcome.errors);
+    EXPECT_NE(outcome.errors.front().find("data table with no preceding step"), std::string::npos)
+        << outcome.errors.front();
+    // Recovery resumed cleanly: the step after the malformed table's three
+    // rows attached normally, proving the parser is back in a sane state
+    // rather than still confused by the skipped table.
+    ASSERT_EQ(outcome.feature.scenarios.size(), 1u);
+    ASSERT_EQ(outcome.feature.scenarios[0].steps.size(), 1u);
+    EXPECT_EQ(outcome.feature.scenarios[0].steps[0].text, "a step right after the malformed table");
 }
 
 // ---------------------------------------------------------------------
@@ -1756,6 +2081,18 @@ TEST(GherkinTagExpression, UnrecognizedCharacterThrowsInvalidArgument) {
     EXPECT_THROW({ GherkinImpl::ParseTagExpression("@a $ @b"); }, std::invalid_argument);
 }
 
+// Every TagExpressionNode ParseTagExpression ever produces has op set to one
+// of the 4 real enumerators - EvaluateTagExpression's switch is genuinely
+// exhaustive for any node this parser can build. A corrupted op value
+// (unreachable via ParseTagExpression itself) is the only way to fall
+// through to the trailing "return false" EvaluateTagExpression's own comment
+// documents as unreachable in practice.
+TEST(GherkinTagExpression, InvalidOpValueFallsThroughToUnreachableReturnFalse) {
+    const GherkinImpl::TagExpressionNode node{
+        .op = static_cast<GherkinImpl::TagExprOp>(99), .tagName = "", .left = nullptr, .right = nullptr };
+    EXPECT_FALSE(GherkinImpl::EvaluateTagExpression(node, {}));
+}
+
 // ---------------------------------------------------------------------
 // StepRegistry::AddBeforeHookExpr/AddAfterHookExpr - registration-time
 // parsing (a malformed expression must throw immediately from the call
@@ -1796,4 +2133,157 @@ TEST(GherkinStepRegistryHookExpr, AddAfterHookExprThrowsImmediatelyOnMalformedEx
     BabyBehave::BDD::Gherkin::StepRegistry registry;
     EXPECT_THROW({ registry.AddAfterHookExpr("", [](BabyBehave::BDD::TestContext&) {}); }, std::invalid_argument);
     EXPECT_TRUE(registry.AfterHooks().empty());
+}
+
+// ---------------------------------------------------------------------
+// Internal defensive guards (v0.9.1 100%-coverage closure): a handful of
+// impl::-level branches this codebase's own comments already document as
+// "unreachable in practice" - defensive invariant-guards kept only so the
+// surrounding code compiles/never dereferences something empty, never
+// actually reachable through StepRegistry::AddStepDefinition's registration-
+// time validation or ParseFeatureText's own state machine. Called here
+// directly with deliberately invariant-violating state, the same "call
+// impl:: directly, no RunFeature/death-test needed" convention this file
+// already uses throughout (see e.g. GherkinCucumberExpression/
+// GherkinTagExpression above) - a white-box test is the ONLY way to
+// exercise these at all, since the normal registration/parsing flow
+// structurally cannot produce the state they guard against.
+// ---------------------------------------------------------------------
+
+// impl::InvokeStepNoRawArg's "captured argument count does not match step
+// definition" branch: unreachable via AddStepDefinition/TryMatch, which
+// always keep captures.size() and paramCount in lockstep whenever
+// rawArgKind == RawArgumentKind::None (AddStepDefinition throws at
+// registration time otherwise - see StepDefinitionRawArgKind's doc comment).
+TEST(GherkinInternalDefensiveGuards, InvokeStepNoRawArgCapturedArgumentCountMismatchReturnsFalse) {
+    auto stepFn = [](BabyBehave::BDD::TestContext&, int) -> bool { return true; };
+    using F = decltype(stepFn);
+    using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+    BabyBehave::BDD::TestContext ctx;
+    const std::vector<std::string> captures; // size 0, but paramCount is 1.
+    EXPECT_FALSE((GherkinImpl::InvokeStepNoRawArg<ArgsTuple, 1, false>(stepFn, ctx, captures)));
+}
+
+// impl::InvokeStepWithRawArg's two "captured argument count does not match
+// step definition" branches (DataTable-sink and std::string-sink) - same
+// unreachability reasoning as above, this time for rawArgKind != None (where
+// StepDefinitionRawArgKind guarantees capturesN == compiled.placeholderCount).
+TEST(GherkinInternalDefensiveGuards, InvokeStepWithRawArgDataTableCapturedArgumentCountMismatchReturnsFalse) {
+    auto stepFn = [](BabyBehave::BDD::TestContext&, int, const BabyBehave::BDD::Gherkin::DataTable&) -> bool { return true; };
+    using F = decltype(stepFn);
+    using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+    BabyBehave::BDD::TestContext ctx;
+    const std::vector<std::string> captures; // size 0, but capturesN (paramCount - 1) is 1.
+    const GherkinImpl::RawArgument rawArgument{};
+    EXPECT_FALSE((GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 2>(stepFn, ctx, captures, rawArgument)));
+}
+
+TEST(GherkinInternalDefensiveGuards, InvokeStepWithRawArgDocStringCapturedArgumentCountMismatchReturnsFalse) {
+    auto stepFn = [](BabyBehave::BDD::TestContext&, int, const std::string&) -> bool { return true; };
+    using F = decltype(stepFn);
+    using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+    BabyBehave::BDD::TestContext ctx;
+    const std::vector<std::string> captures; // size 0, but capturesN (paramCount - 1) is 1.
+    const GherkinImpl::RawArgument rawArgument{};
+    EXPECT_FALSE((GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 2>(stepFn, ctx, captures, rawArgument)));
+}
+
+// impl::InvokeStepWithRawArg's final "not a recognized raw-argument type"
+// arm: StepDefinitionRawArgKind only ever returns a non-None kind when F's
+// real trailing parameter is DataTable or std::string (else it throws at
+// registration time), so InvokeStepWithRawArg is never actually CALLED for
+// an F like this one through AddStepDefinition/MakeStepThunk - even though
+// it IS instantiated (MakeStepThunk's lambda body references both branches
+// unconditionally for every F). This is an ordinary placeholder-only step
+// definition (last parameter is plain int), used all over this codebase;
+// this test just calls its already-compiled InvokeStepWithRawArg
+// instantiation directly instead of through that lambda.
+TEST(GherkinInternalDefensiveGuards, InvokeStepWithRawArgUnrecognizedTrailingParameterTypeReturnsFalse) {
+    auto stepFn = [](BabyBehave::BDD::TestContext&, int) -> bool { return true; };
+    using F = decltype(stepFn);
+    using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+    BabyBehave::BDD::TestContext ctx;
+    const std::vector<std::string> captures{ "5" };
+    const GherkinImpl::RawArgument rawArgument{};
+    EXPECT_FALSE((GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 1>(stepFn, ctx, captures, rawArgument)));
+}
+
+// impl::InvokeStepWithRawArg's "paramCount == 0" else-branch: AddStepDefinition
+// only ever computes a non-None rawArgKind when paramCount >= 1, so a
+// zero-parameter step definition (very common - a Given/When/Then with no
+// placeholder captures at all) always keeps rawArgKind == None and this
+// runtime `if (rawArgKind == None) return InvokeStepNoRawArg...` branch in
+// MakeStepThunk's lambda never even calls InvokeStepWithRawArg for it - but
+// the function IS still instantiated (and compiled) for such an F, same
+// reasoning as the test above.
+TEST(GherkinInternalDefensiveGuards, InvokeStepWithRawArgZeroParamCountReturnsFalse) {
+    auto stepFn = [](BabyBehave::BDD::TestContext&) -> bool { return true; };
+    using F = decltype(stepFn);
+    using ArgsTuple = GherkinImpl::CallableSignature<F>::ArgsTuple;
+    BabyBehave::BDD::TestContext ctx;
+    const std::vector<std::string> captures;
+    const GherkinImpl::RawArgument rawArgument{};
+    EXPECT_FALSE((GherkinImpl::InvokeStepWithRawArg<ArgsTuple, 0>(stepFn, ctx, captures, rawArgument)));
+}
+
+// impl::ResolveStepTarget's "no Scenario in progress" throw: unreachable via
+// ProcessFeatureLine, which always resets lastStepTarget before
+// currentScenario is ever swapped/flushed - so a StepTarget with
+// inBackground == false is only ever produced while currentScenario is
+// engaged.
+TEST(GherkinInternalDefensiveGuards, ResolveStepTargetThrowsWhenNoScenarioInProgress) {
+    GherkinImpl::FeatureParseState state;
+    const GherkinImpl::StepTarget target{ .inBackground = false, .index = 0 };
+    EXPECT_THROW(GherkinImpl::ResolveStepTarget(state, target), std::logic_error);
+}
+
+// impl::HandleDataTableLine's "data table with no preceding step" branch
+// reached while state.inDataTable is already true: unreachable via
+// ProcessFeatureLine, which only ever sets inDataTable true right after
+// lastStepTarget is set (both cleared together on every context change).
+TEST(GherkinInternalDefensiveGuards, HandleDataTableLineNoPrecedingStepWhileInDataTableRecordsErrorAndResets) {
+    GherkinImpl::FeatureParseState state;
+    state.inDataTable = true;
+    state.lastStepTarget.reset();
+
+    GherkinImpl::HandleDataTableLine(state, "| a | b |", 7);
+
+    ASSERT_EQ(state.errors.size(), 1u) << JoinErrors(state.errors);
+    EXPECT_NE(state.errors.front().find("data table with no preceding step"), std::string::npos) << state.errors.front();
+    EXPECT_FALSE(state.inDataTable);
+    EXPECT_TRUE(state.skipMalformedTableLines);
+}
+
+// impl::HandleExamplesTableRow's "!pendingExamples" auto-init guard:
+// unreachable via ProcessFeatureLine, which only ever routes here while
+// state.inExamplesTable is true, which is only ever set true together with
+// state.pendingExamples being engaged (see the 'Examples:'/'Scenarios:' line
+// handling).
+TEST(GherkinInternalDefensiveGuards, HandleExamplesTableRowAutoInitializesMissingPendingExamples) {
+    GherkinImpl::FeatureParseState state;
+    state.pendingExamples.reset();
+
+    GherkinImpl::HandleExamplesTableRow(state, "| a | b |", 3);
+
+    ASSERT_TRUE(state.pendingExamples.has_value());
+    EXPECT_EQ(state.pendingExamples->header, (std::vector<std::string>{ "a", "b" }));
+    EXPECT_TRUE(state.haveExamplesHeader);
+}
+
+// impl::HandleDocStringLine's closing-delimiter "no preceding step" guard:
+// unreachable via ProcessFeatureLine, since reaching a CLOSING '"""' with
+// state.inDocString true implies the OPENING '"""' already validated
+// state.lastStepTarget (the only place state.inDocString is ever set true).
+TEST(GherkinInternalDefensiveGuards, HandleDocStringLineClosingWithNoPrecedingStepRecordsErrorAndResets) {
+    GherkinImpl::FeatureParseState state;
+    state.inDocString = true;
+    state.docStringLines = { "orphaned content" };
+    state.lastStepTarget.reset();
+
+    GherkinImpl::HandleDocStringLine(state, R"(""")", R"(""")", 9);
+
+    ASSERT_EQ(state.errors.size(), 1u) << JoinErrors(state.errors);
+    EXPECT_NE(state.errors.front().find("doc string with no preceding step"), std::string::npos) << state.errors.front();
+    EXPECT_FALSE(state.inDocString);
+    EXPECT_TRUE(state.docStringLines.empty());
 }

@@ -96,6 +96,21 @@ ctx.Set(kAnswerKey, 42);
 int x = ctx.Get(kAnswerKey);   // wrong-type Set/Get calls fail to compile instead of throwing
 ```
 
+**In-place mutation and lazy initialization** — for scenarios that need to modify shared state directly (without copy-mutate-writeback ceremony) or lazily initialize values:
+
+```cpp
+// Mutate<T>(key) returns a live reference to mutate the stored value in place
+std::vector<int>& items = ctx.Mutate<std::vector<int>>("items");
+items.push_back(42);
+
+// GetOrInit<T>(key, init) inserts init only if key is absent, returns reference
+std::shared_ptr<Connection>& conn = ctx.GetOrInit<std::shared_ptr<Connection>>("db",
+    std::make_shared<Connection>("localhost"));
+conn->Query("SELECT ...");  // conn already initialized if this isn't the first step
+```
+
+Both come in string-keyed and `Key<T>`-keyed variants for consistency.
+
 ## Customizing the macros
 
 The fluent keywords (`Given`, `With`, `When`, `Then`, `And`, `Or`, `But`, and their `...I` variants) are implemented as macros so they can stringify your function names. They use capitalized identifiers to stay clear of the C++ alternative tokens `and`/`or`, but a name like `And` or `When` can still collide with another library or with your own code.
@@ -259,15 +274,17 @@ BabyBehave includes a runtime `.feature` file interpreter for teams that prefer 
 #include <BabyBehave/bdd.hpp>
 
 using namespace BabyBehave::BDD;
+using namespace BabyBehave::BDD::Gherkin;
 
 int main() {
-    Gherkin::StepRegistry registry;
+    StepRegistry registry;
     
+    // Register step definitions: pattern + keyword(s) + implementation.
     registry.RegisterGiven("an empty basket", [](TestContext& ctx) {
         ctx.Set("basket", std::make_shared<Basket>());
         return true;
     });
-    registry.RegisterWhen("I add {int} apples", [](TestContext& ctx, int count) {
+    registry.RegisterStep({Keyword::When, Keyword::And}, "I add {int} apples", [](TestContext& ctx, int count) {
         ctx.Get<std::shared_ptr<Basket>>("basket")->Add("apple", count);
         return true;
     });
@@ -275,27 +292,34 @@ int main() {
         return ctx.Get<std::shared_ptr<Basket>>("basket")->Count() == expected;
     });
     
-    const auto feature = R"gherkin(
-        Feature: Shopping basket
-        
-        Scenario: Adding an item increases the count
-            Given an empty basket
-            When I add 3 apples
-            Then the basket contains 3 items
-    )gherkin";
+    const auto feature = R"feature(
+Feature: Shopping basket
+  Scenario: Adding items to a basket
+    Given an empty basket
+    When I add 3 apples
+    And I add 2 oranges
+    Then the basket contains 5 items
+)feature";
     
-    Gherkin::RunFeature(feature, registry, "Shopping basket");
+    const auto result = Feature(feature, registry).Label("Shopping basket").Run();
+    return result.ExitCode();
 }
 ```
+
+**Step registration ergonomics:** `RegisterStep(keywords, pattern, fn)` registers a step for multiple keywords at once (e.g. `{Keyword::When, Keyword::And}` registers the same pattern for both When and And steps). For bulk declarative registration of many steps, `RegisterSteps(StepEntry<F1>{...}, StepEntry<F2>{...}, ...)` accepts a variadic list of `StepEntry<F>` structures (each with a keyword, pattern, and function), enabling a clean table-like registration style for domains with 10+ steps. Both are purely additive — `RegisterGiven`/`RegisterWhen`/`RegisterThen`/`RegisterAnd`/`RegisterBut` and the positional `RunFeature()` API remain fully supported.
+
+**Feature execution builder:** The `Feature(text, registry)` and `FeatureFromFile(path, registry)` factory functions return a `FeatureRun` builder that offers `.Label(name)`, `.OnFailure(callback)`, `.Parallel(bool)`, and `.Run()` methods for named-parameter ergonomics. `Run()` returns a `FeatureResult` with an `ExitCode()` method for portable exit-code decision-making, complementing the pre-existing positional `RunFeature()` signature. `LoadFeatureFile(path)` is a standalone utility for reading `.feature` files from disk.
+
+**Error reporting:** Structural `.feature` file parse errors are now collected and reported in one pass (one `onFailure` call per error, format `"<file>:<line>: parse error: <message>"`) instead of stopping at the first. Scenario failure messages are a single concise line summarizing the outcome, with full per-step detail still available via `FeatureResult::scenarioResults[i].steps` for programmatic inspection.
 
 The interpreter supports:
 - **Feature labels and Scenarios** — organized test flows with readable names
 - **Background steps** — shared preconditions for multiple scenarios
 - **Step parameters** — `{int}`, `{float}`, `{string}`, `{word}` placeholders with automatic type conversion
 - **Tags** — `@tag` annotations for scenario filtering and hook registration
-- **Before/After hooks** — tag-scoped setup/teardown via `AddBeforeHook()`/`AddAfterHook()`
+- **Before/After hooks** — tag-scoped setup/teardown via `AddBeforeHook()`/`AddAfterHook()`, or combined via `AddAroundHook()` for Before+After pairs
 - **Suite-level Before/After-all hooks** — one-time setup/teardown across all Scenarios in a Feature via `AddBeforeAllHook()`/`AddAfterAllHook()`; Before-ALL runs once before any Scenario, After-ALL runs once after all Scenarios (guaranteed only with a custom non-exiting `onFailure` callback)
-- **Tag expressions (AND/OR/NOT)** — boolean tag-matching expressions for conditional hooks via `AddBeforeHookExpr()`/`AddAfterHookExpr()`; supports `and`/`or`/`not` keywords with parentheses for grouping
+- **Tag expressions (AND/OR/NOT)** — boolean tag-matching expressions for conditional hooks via `AddBeforeHookExpr()`/`AddAfterHookExpr()`/`AddAroundHookExpr()`; supports `and`/`or`/`not` keywords with parentheses for grouping
 - **Comments** — `# comments` in `.feature` files are parsed and ignored
 - **Timeout annotations** — `@timeout:<value><unit>` tags for scenario-level deadline checking (cooperative inter-step only, no preemptive interruption)
 - **Scenario Outline / Examples** — data-driven scenario expansion with `<placeholder>` tokens in step text and pipe-delimited `Examples:` tables
@@ -313,13 +337,13 @@ FeatureResult RunFeature(std::string_view featureText, StepRegistry& registry,
                           bool enableParallelScenarios = false);
 ```
 
-A callback that returns normally instead of exiting/throwing lets `RunFeature()` keep going across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp) below.
+Alternatively, use the builder API for named-parameter style: `Feature(text, registry).Label(...).OnFailure(...).Parallel(...).Run()` or `FeatureFromFile(path, registry).OnFailure(...).Run()` (the latter defaults its label to the file path). A callback that returns normally instead of exiting/throwing lets execution continue across the whole Feature and return a `FeatureResult` with `allPassed=false` for you to inspect — see [`GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp) below. `Gherkin::CollectingFailureHandler` is a provided implementation that appends each message to a `std::vector<std::string>` instead of exiting, useful for concurrent or multi-scenario test runs.
 
 ### Examples
 
 Three core Gherkin examples live directly in [`examples/`](examples/); the rest (including two multi-file registry-reuse demos) live in [`examples/gherkin/`](examples/gherkin/):
 
-- **[`GherkinBasket.cpp`](examples/GherkinBasket.cpp)** — basic Given/When/Then and step-parameter placeholders
+- **[`GherkinBasket.cpp`](examples/GherkinBasket.cpp)** — demonstrates `RegisterStep()` bulk registration, the `Feature(...).Label(...).Run()` builder pattern, and `FeatureResult::ExitCode()`
 - **[`GherkinBackground.cpp`](examples/GherkinBackground.cpp)** — shared Background steps across multiple scenarios
 - **[`GherkinTagsAndHooks.cpp`](examples/GherkinTagsAndHooks.cpp)** — tag-scoped `@tag` filters and Before/After hook registration
 - **[`gherkin/GherkinUnmatchedStep.cpp`](examples/gherkin/GherkinUnmatchedStep.cpp)** — demonstrating fail-hard behavior on unmatched steps
@@ -330,7 +354,7 @@ Three core Gherkin examples live directly in [`examples/`](examples/); the rest 
 - **[`gherkin/GherkinVeryAdvanced.cpp`](examples/gherkin/GherkinVeryAdvanced.cpp)** — multi-feature scenarios with integration of `reporters.hpp`
 - **[`gherkin/GherkinCustomFailureHandler.cpp`](examples/gherkin/GherkinCustomFailureHandler.cpp)** — a custom `onFailure` callback that collects failure messages instead of exiting
 
-**Bakery/Library domain examples** — [`gherkin/BakerySteps.hpp`](examples/gherkin/BakerySteps.hpp) and [`gherkin/LibrarySteps.hpp`](examples/gherkin/LibrarySteps.hpp) are shared step-definition libraries reused via `StepRegistry::Merge()` across most (not all — a few below build their own standalone registry instead) of the example files in each domain, each with genuinely different scenarios (reading their `.feature` text from real files under [`gherkin/features/`](examples/gherkin/features/), not embedded strings):
+**Bakery/Library domain examples** — [`gherkin/BakerySteps.hpp`](examples/gherkin/BakerySteps.hpp) and [`gherkin/LibrarySteps.hpp`](examples/gherkin/LibrarySteps.hpp) are shared step-definition libraries reused via `StepRegistry::Merge()` across most (not all — a few below build their own standalone registry instead) of the example files in each domain, each with genuinely different scenarios (reading their `.feature` text from real files under [`gherkin/features/`](examples/gherkin/features/) via `LoadFeatureFile()`, not embedded strings). Each example follows a consistent `PrepareRegistry()` / `RunFeatureFromFile()` pattern:
 
 - **[`gherkin/GherkinBakeryStandardOrder.cpp`](examples/gherkin/GherkinBakeryStandardOrder.cpp)** — standard cake order paid in full
 - **[`gherkin/GherkinBakeryAllergenSubstitution.cpp`](examples/gherkin/GherkinBakeryAllergenSubstitution.cpp)** — allergen substitution surcharge, plus `Merge()` for a file-specific step

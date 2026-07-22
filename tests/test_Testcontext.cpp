@@ -229,6 +229,92 @@ TEST(TestContext, testGetNonExistentKeyCustomClassType) {
     ASSERT_THROW((void)context.Get<MyClass>("missingCustomClassKey"), std::out_of_range);
 }
 
+// ---------------------------------------------------------------------
+// TestContext::Mutate<T>() - like Get<T>() but returns a live, mutable
+// reference into the stored value instead of a copy.
+// ---------------------------------------------------------------------
+
+TEST(TestContext, MutateReturnsALiveReferenceThatChangesTheStoredValue) {
+    BabyBehave::BDD::TestContext context;
+    context.Set(std::string("count"), 1);
+
+    int& ref = context.Mutate<int>("count");
+    ref = 42;
+
+    ASSERT_EQ(context.Get<int>("count"), 42);
+}
+
+TEST(TestContext, MutateOnMissingKeyThrowsOutOfRangeWithSameMessageAsGet) {
+    BabyBehave::BDD::TestContext context;
+    try {
+        (void)context.Mutate<int>("missingMutateKey");
+        FAIL() << "Expected std::out_of_range";
+    } catch (const std::out_of_range& e) {
+        ASSERT_STREQ("Key not found: missingMutateKey", e.what());
+    }
+}
+
+TEST(TestContext, MutateOnWrongTypeThrowsBadAnyCast) {
+    BabyBehave::BDD::TestContext context;
+    context.Set(std::string("key"), 123);
+    ASSERT_THROW((void)context.Mutate<std::string>("key"), std::bad_any_cast);
+}
+
+TEST(TestContext, MutateKeyedVariantRoundTripsThroughContextKey) {
+    BabyBehave::BDD::TestContext context;
+    static constexpr BabyBehave::BDD::Key<int> kMutateKey{"mutateKeyed"};
+    context.Set(kMutateKey, 7);
+
+    int& ref = context.Mutate(kMutateKey);
+    ref = 99;
+
+    ASSERT_EQ(context.Get(kMutateKey), 99);
+}
+
+// ---------------------------------------------------------------------
+// TestContext::GetOrInit<T>() - inserts `init` only if key is absent;
+// never overwrites an existing value.
+// ---------------------------------------------------------------------
+
+TEST(TestContext, GetOrInitInsertsInitValueWhenKeyIsAbsent) {
+    BabyBehave::BDD::TestContext context;
+    int& value = context.GetOrInit<int>("freshKey", 42);
+    ASSERT_EQ(value, 42);
+    ASSERT_EQ(context.Get<int>("freshKey"), 42);
+}
+
+TEST(TestContext, GetOrInitDoesNotOverwriteAnExistingValue) {
+    BabyBehave::BDD::TestContext context;
+    context.Set(std::string("existingKey"), 10);
+
+    int& value = context.GetOrInit<int>("existingKey", 999);
+
+    // The pre-existing value (10) wins; the `init` argument (999) is discarded.
+    ASSERT_EQ(value, 10);
+    ASSERT_EQ(context.Get<int>("existingKey"), 10);
+}
+
+TEST(TestContext, GetOrInitReturnsALiveReferenceUsableForInPlaceMutation) {
+    BabyBehave::BDD::TestContext context;
+    int& value = context.GetOrInit<int>("counterKey", 0);
+    ++value;
+    ++value;
+    ASSERT_EQ(context.Get<int>("counterKey"), 2);
+}
+
+TEST(TestContext, GetOrInitKeyedVariantRoundTripsAndRespectsExistingValue) {
+    BabyBehave::BDD::TestContext context;
+    static constexpr BabyBehave::BDD::Key<int> kFreshKeyed{"freshKeyed"};
+    static constexpr BabyBehave::BDD::Key<int> kExistingKeyed{"existingKeyed"};
+
+    int& fresh = context.GetOrInit(kFreshKeyed, 5);
+    ASSERT_EQ(fresh, 5);
+
+    context.Set(kExistingKeyed, 1);
+    int& existing = context.GetOrInit(kExistingKeyed, 999);
+    ASSERT_EQ(existing, 1);
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

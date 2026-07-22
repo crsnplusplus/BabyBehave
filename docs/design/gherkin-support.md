@@ -84,6 +84,152 @@ Non-grammar runtime/API extensions in this vein belong in this table, not in the
 
 Execution order per Scenario: **Before hooks (registration order) → Background → Scenario's own steps → After hooks (registration order)**. Tag matching for hooks/filters is **AND/subset only** in v0.8.0 (no OR/NOT) — OR is achievable by registering the same hook multiple times under single-tag filters (a consumer-side workaround, no new engine complexity); NOT is deferred.
 
+## Ergonomic API surface (v0.9.1+)
+
+### TestContext mutations and lazy initialization
+
+Two new `TestContext` methods improve ergonomics when steps need to modify shared state in place:
+
+**`Mutate<T>(key)` / `Mutate<T>(key<T>)`** — returns a live `T&` reference into the stored value, letting a step mutate a large or expensive-to-copy object directly without copy-mutate-writeback ceremony. Throws `std::out_of_range` if the key is absent (same convention as `Get<T>`), or `std::bad_any_cast` if the stored type doesn't match.
+
+**`GetOrInit<T>(key, init={})` / `GetOrInit<T>(key<T>, init={})`** — returns a reference to the stored value for `key`, inserting `init` if `key` is absent. Unlike `Set<T>`, which always overwrites, `GetOrInit<T>` only inserts if the key is absent and returns the existing value if it's already present. Useful for lazy initialization of shared state.
+
+Both methods come in string-keyed (`std::string_view`) and `Key<T>`-keyed (typed-key) variants for consistency with the existing `Get<T>` / `Set<T>` API.
+
+**Important:** These are **not** Gherkin-specific. They work with the fluent `Given`/`With`/`When`/`Then` API and everywhere else `TestContext` is used. The typed-key mechanism (`Key<T>`) is described immediately below.
+
+### Typed context keys: `Key<T>`
+
+`Key<T>` is a concise public alias for the pre-existing `TestContext::ContextKey<T>`:
+
+```cpp
+// Instead of:
+static constexpr TestContext::ContextKey<int> kCount{"count"};
+
+// Write:
+static constexpr Key<int> kCount{"count"};
+```
+
+It's the same type and mechanism — just shorter. Useful for decoupling typos and type mismatches from runtime by declaring keys once and reusing them:
+
+```cpp
+static constexpr Key<std::shared_ptr<Account>> kAccount{"account"};
+// In a step:
+ctx.Mutate(kAccount)->Debit(amount);  // compile-error if type mismatches
+```
+
+### Bulk declarative step registration: `RegisterStep`, `RegisterSteps`, `Keyword`, `StepEntry`
+
+`Gherkin::Keyword` is a public enum with values `Given`, `When`, `Then`, `And`, `Or`, `But` for naming the Gherkin keyword a step definition matches.
+
+`StepRegistry::RegisterStep(keywords, pattern, fn)` registers a single step definition. `keywords` is a vector of `Gherkin::Keyword` values matching the pattern (usually one, but a reusable step can register under multiple keywords by passing `{Keyword::When, Keyword::Then}`, for example).
+
+`StepRegistry::RegisterSteps(entries...)` is a bulk, variadic registration API using `StepEntry<F>` structures:
+
+```cpp
+struct StepEntry {
+    std::initializer_list<Keyword> keywords;  // one or more keywords
+    std::string pattern;                      // step text, with {int}/{float}/{string}/{word}
+    F fn;                                     // step function: bool(TestContext&) or with typed args
+};
+
+registry.RegisterSteps(
+    StepEntry{Keyword::Given, "an empty basket", [](TestContext& ctx) { /* ... */ return true; }},
+    StepEntry{Keyword::When, "I add {int} items", [](TestContext& ctx, int count) { /* ... */ return true; }},
+    StepEntry{Keyword::Then, "the count is {int}", [](TestContext& ctx, int expected) { /* ... */ return true; }}
+);
+```
+
+**Naming convention:** For non-trivial step bodies, name them in PascalCase as `<Keyword><ShortDescription>` (e.g., `GivenAnEmptyBasket`, `WhenIAddItems`) and pass by function pointer; for trivial inline steps, use lambdas directly. This convention arose from a real-world pain point — domains with 10+ steps per registry benefit from a quick glance to understand "what's Given, what's When" without reading every lambda body.
+
+### Around-hook sugar: `AddAroundHook`, `AddAroundHookExpr`
+
+`StepRegistry::AddAroundHook(tags, beforeFn, afterFn)` and `AddAroundHookExpr(expression, beforeFn, afterFn)` register a Before+After pair as a single call, more concise than two separate `AddBeforeHook`/`AddAfterHook` registrations:
+
+```cpp
+registry.AddAroundHook({"slow"}, 
+    [](TestContext& ctx) { ctx.Set("timer", Clock::now()); },
+    [](TestContext& ctx) { LogDuration(ctx.Get<TimePoint>("timer")); }
+);
+```
+
+### Builder-style feature execution: `FeatureRun`, `Feature()`, `FeatureFromFile()`
+
+The traditional `RunFeature(text, registry, label, onFailure)` is still available and works unchanged. The new `FeatureRun` builder offers named-parameter ergonomics and reduces positional-argument confusion:
+
+```cpp
+FeatureResult result = Feature(featureText, registry)
+    .Label("My Feature")
+    .OnFailure(customCallback)
+    .EnableParallelScenarios(true)
+    .Run();
+```
+
+`Feature()` takes feature text directly; `FeatureFromFile()` loads from the filesystem:
+
+```cpp
+FeatureResult result = FeatureFromFile("path/to/file.feature", registry)
+    .Label("From file")
+    .Run();
+```
+
+`LoadFeatureFile(path)` is a plain file-loading utility returning a `std::string` — distinct from the example-only `examples/gherkin/LoadFeatureFile.hpp` helper, which uses a CMake-define-based path resolution for locating example `.feature` files regardless of invocation directory. Use `Gherkin::LoadFeatureFile()` for normal filesystem loading; use the example helper only when working with vendored example files.
+
+### Rich failure reporting: `FeatureResult::ExitCode()`, `CollectingFailureHandler`
+
+`FeatureResult::ExitCode()` returns a portable exit code suitable for `std::exit()`:
+- 0 if `allPassed` is true
+- Non-zero (EXIT_FAILURE) otherwise
+
+Useful for test runners that want to defer exit-code decision to after inspecting the result.
+
+`Gherkin::CollectingFailureHandler` is a thread-safe failure collector for scenarios that want to gather all failures without exiting:
+
+```cpp
+std::vector<std::string> failures;
+std::mutex failuresMutex;
+
+Gherkin::CollectingFailureHandler handler(failures);
+
+FeatureResult result = Feature(featureText, registry)
+    .OnFailure(handler)  // handler.operator()(message) called per failure
+    .Run();
+
+// Inspect failures vector here, after all scenarios complete
+if (!result.allPassed) {
+    for (const auto& msg : failures) {
+        std::cerr << msg << '\n';
+    }
+}
+```
+
+### Parse-error and scenario-failure reporting (v0.9.1+)
+
+**Parse errors — all errors collected, not just the first**
+
+Before v0.9.1, parsing would stop at the first structural error. From v0.9.1 onward, `LoadFeatureFile()` and `Feature(text, registry)` collect **every** structural parse error across the entire `.feature` file in one pass, reporting each via a single `onFailure` call per error, formatted as `"<file>:<line>: parse error: <message>"`. The hard invariant is unchanged: **if ANY structural error exists anywhere in the file, ZERO scenarios execute** — it's "see every problem at once", not "run the valid parts and skip the broken ones".
+
+Structural errors fall into three categories:
+
+1. **Point errors** (e.g., unrecognized line keyword) — reported at their line, parsing continues
+2. **Corruptive errors** (e.g., an unclosed doc string) — the parser resyncs to the next `Scenario:`, `Background:`, `Scenario Outline:`, or end-of-file boundary to avoid cascading bogus errors from the corrupted state
+3. **Intermediate errors** (e.g., malformed data tables) — a table's remaining rows are skipped; the next line (if any) is re-parsed normally
+
+**Scenario failures — concise one-line digest, full detail in `FeatureResult::scenarioResults`**
+
+When a Scenario fails, `onFailure` is invoked **exactly once per failed Scenario** (cardinality unchanged), but the message is now a single concise line instead of a multi-line enumeration:
+
+```
+"<file>:<scenarioLine>: scenario failed: '<name>' - K/N step(s) failed, first: [<stepLabel>] <stepName>: <message> (at <location>)"
+```
+
+Example:
+```
+"features/basket.feature:12: scenario failed: 'Adding items increases count' - 2/3 step(s) failed, first: [When] I add negative items: negative quantity invalid (at features/basket.feature:14)"
+```
+
+Full per-step detail remains completely unaffected and available in `FeatureResult::scenarioResults[i].steps` — the digest is only what reaches the `onFailure` callback. This change makes it easier to skim failure summaries in large test runs without sacrificing detail for programmatic inspection or logging.
+
 ## Examples
 
 ### 1 — plain scenario, typed placeholders

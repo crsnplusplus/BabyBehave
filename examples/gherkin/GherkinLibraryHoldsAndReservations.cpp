@@ -11,6 +11,17 @@
 // library_holds_and_reservations.feature, read from disk via
 // LoadFeatureFile() - see GherkinBakeryStandardOrder.cpp's comment for why.
 
+namespace {
+
+// One-line body: a genuinely trivial lambda, left inline rather than
+// promoted to a named function (see the project's naming convention for
+// when a step earns a name).
+bool AndLibraryNotifiesMemberBookIsReadyForPickup(TestContext& ctx, std::string member, std::string title) {
+    return ctx.Get(library_steps::kCheckedOutBy) == member && ctx.Get(library_steps::kBookTitle) == title;
+}
+
+} // namespace
+
 StepRegistry PrepareRegistry() {
     StepRegistry registry = MakeLibraryStepRegistry();
 
@@ -19,10 +30,8 @@ StepRegistry PrepareRegistry() {
     // the shared registry via Merge() instead of every Library example
     // paying for it.
     StepRegistry notificationExtras;
-    notificationExtras.RegisterAnd("the library notifies {word} that {string} is ready for pickup",
-        [](TestContext& ctx, std::string member, std::string title) -> bool {
-            return ctx.Get<std::string>("checked_out_by") == member && ctx.Get<std::string>("book_title") == title;
-        });
+    notificationExtras.RegisterAnd(
+        "the library notifies {word} that {string} is ready for pickup", AndLibraryNotifiesMemberBookIsReadyForPickup);
     registry.Merge(notificationExtras);
 
     return registry;
